@@ -49,13 +49,13 @@ export function BoardScene({ decor }: { decor?: boolean }) {
       <directionalLight position={[40, -60, 90]} intensity={1.6} color="#fff3e0" />
       <directionalLight position={[-60, 40, 40]} intensity={0.5} color="#9fd8ff" />
       {!flag('noenv') && <Environment resolution={128}>
-        <Lightformer intensity={2} position={[0, -20, 30]} rotation-x={Math.PI / 2} scale={[40, 40, 1]} color="#fff2dd" />
+        <Lightformer intensity={1.2} position={[0, -20, 30]} rotation-x={Math.PI / 2} scale={[40, 40, 1]} color="#fff2dd" />
         <Lightformer intensity={0.8} position={[40, 30, 20]} rotation-x={Math.PI / 2} scale={[30, 20, 1]} color="#8fd7ff" />
         <Lightformer intensity={0.6} position={[-40, 20, 10]} rotation-x={Math.PI / 2} scale={[20, 20, 1]} color="#ffb86b" />
       </Environment>}
       <DebugHook />
       {flag('simple') ? <mesh position={[0, 0, 0]}><boxGeometry args={[20, 12, 2]} /><meshStandardMaterial color="#1d5c2b" /></mesh> : decor ? <DecorBoard /> : <LiveBoard />}
-      {!NOFX && <Effects />}
+      {!NOFX && <Effects strength={0.45} threshold={0.92} />}
     </Canvas>
   )
 }
@@ -180,8 +180,13 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
   const idleTimer = useRef(0)
   const fitted = useRef('')
   const exploded = useStore(s => s.exploded)
+  const tab = useStore(s => s.tab)
+  const phase = useStore(s => s.phase)
   const explodeAt = useRef(0)
+  const resetAt = useRef(0)
   useEffect(() => { explodeAt.current = performance.now() }, [exploded])
+  // glide back to the default 3/4 view whenever the tab changes or the run completes
+  useEffect(() => { if (!decor) resetAt.current = performance.now() }, [tab, phase, decor])
   useEffect(() => {
     const key = `${center[0]},${center[1]},${size}`
     if (fitted.current === key) return
@@ -202,6 +207,14 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
       c.update()
       return
     }
+    if (!decor && !exploded && performance.now() - resetAt.current < 2200 && performance.now() - explodeAt.current > 2500) {
+      const d = size * 2.0
+      const want = new THREE.Vector3(center[0] - d * 0.45, center[1] - d * 0.8, d * 0.7)
+      camera.position.lerp(want, Math.min(1, dt * 2.5))
+      c.target.lerp(new THREE.Vector3(center[0], center[1], 0.8), Math.min(1, dt * 2.5))
+      c.update()
+      return
+    }
     // when the layer stack explodes/collapses, glide the camera to a distance that frames it
     if (!decor && performance.now() - explodeAt.current < 2500) {
       const want = size * (exploded ? 3.8 : 2.0)
@@ -216,7 +229,7 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
     c.autoRotate = idle.current || decor
   })
   const onStart = () => { idle.current = false; window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { idle.current = true }, 7000) }
-  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} autoRotate autoRotateSpeed={decor ? 0.9 : 0.5} minDistance={8} maxDistance={400} maxPolarAngle={Math.PI * 0.95} onStart={onStart} />
+  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} autoRotate autoRotateSpeed={decor ? 0.9 : 0.5} minDistance={8} maxDistance={400} minPolarAngle={0.12} maxPolarAngle={Math.PI * 0.46} onStart={onStart} />
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,7 +243,7 @@ function Substrate({ board, color }: { board: Board; color: MaskColor }) {
   const col = useMemo(() => M.maskColor(color), [color])
   return (
     <mesh geometry={geo} receiveShadow>
-      <meshStandardMaterial color={col} roughness={0.45} metalness={0.15} />
+      <meshStandardMaterial color={col} roughness={0.62} metalness={0.08} />
     </mesh>
   )
 }

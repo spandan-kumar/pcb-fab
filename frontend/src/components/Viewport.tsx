@@ -76,7 +76,7 @@ export function Viewport() {
         )}
         <AnimatePresence>
           {phase === 'done' && stats && (
-            <motion.div className="done-banner" initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.div className="done-banner" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }}>
               ■ BOARD COMPLETE · {stats.components} PARTS · {stats.nets} NETS · {fmt(stats.total_trace_mm, 0)} mm · {stats.drc_errors} DRC ERRORS
             </motion.div>
           )}
