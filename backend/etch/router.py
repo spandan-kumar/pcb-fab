@@ -21,6 +21,8 @@ CLR = 0.18  # routing clearance mm (JLCPCB min 0.127)
 EDGE_CLR = 0.5
 VIA_DIA, VIA_DRILL = 0.6, 0.3
 INF = float("inf")
+import os
+DEBUG = bool(os.environ.get("ETCH_ROUTER_DEBUG"))
 
 DIRS = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
         (1, 1, math.sqrt(2)), (1, -1, math.sqrt(2)), (-1, 1, math.sqrt(2)), (-1, -1, math.sqrt(2))]
@@ -92,6 +94,7 @@ class Router:
         self.owner = np.zeros((2, self.ny, self.nx), dtype=np.int32)  # 0 free, -1 hard, k = net idx+1
         self.radius = np.zeros((2, self.ny, self.nx), dtype=np.float32)  # half-width of copper at cell (0 for pads)
         self.is_via = np.zeros((self.ny, self.nx), dtype=bool)
+        self.stub = np.zeros((2, self.ny, self.nx), dtype=bool)  # fixed escape stubs of fine-pitch pads
         self.hard = np.zeros((2, self.ny, self.nx), dtype=bool)
         self.time_budget = time_budget
         self.t0 = time.time()
@@ -186,8 +189,9 @@ class Router:
             for (l, y, x) in cells:
                 if self.owner[l, y, x] == 0 or self.owner[l, y, x] == ni + 1:
                     self.owner[l, y, x] = ni + 1
-                    if (l, y, x) not in interior:  # escape stub cells carry a 0.1 radius so neighbours keep clearance
+                    if (l, y, x) not in interior and not self.is_via[y, x]:  # escape stub cells carry a 0.1 radius so neighbours keep clearance
                         self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(0.1))
+                        self.stub[l, y, x] = True
 
     _interior_cache: dict = {}
 
@@ -276,28 +280,26 @@ class Router:
         hardb = self.hard | ((pb != 0) & (pb != own))
         other = (self.owner > 0) & (self.owner != own) & (self.radius > 0)
         softb = np.zeros_like(hardb)
-        radii = [float(r) for r in np.unique(self.radius[other])] if other.any() else []
         via_soft = np.zeros((self.ny, self.nx), dtype=bool)
         ev = VIA_DIA / 2 + CLR
         pbv = self._pad_block_for(ev)
         via_hard = self.hard[0] | self.hard[1] | ((pbv[0] != 0) & (pbv[0] != own)) | ((pbv[1] != 0) & (pbv[1] != own))
         pbo = self._pad_block_for(VIA_DIA / 2 + 0.05)
         via_hard |= (pbo[0] != 0) | (pbo[1] != 0)  # no via-in-pad, even own net
+        # escape stubs of other nets are as hard as pads
+        stub_other = other & self.stub
+        if stub_other.any():
+            for l in range(2):
+                hardb[l] |= dilate(stub_other[l], (w / 2 + CLR + 0.1) / G)
+            via_hard |= dilate(stub_other[0] | stub_other[1], (VIA_DIA / 2 + CLR + 0.1) / G)
+        trace_other = other & ~self.stub
+        radii = [float(r) for r in np.unique(self.radius[trace_other])] if trace_other.any() else []
         for r_obs in radii:
-            tier = other & (self.radius == np.float32(r_obs))
-            is_stub = abs(r_obs - 0.1) < 1e-6
+            tier = trace_other & (self.radius == np.float32(r_obs))
             R = (w / 2 + CLR + r_obs) / G
             for l in range(2):
-                d = dilate(tier[l], R)
-                if is_stub:
-                    hardb[l] |= d
-                else:
-                    softb[l] |= d
-            dv = dilate(tier[0] | tier[1], (VIA_DIA / 2 + CLR + r_obs) / G)
-            if is_stub:
-                via_hard |= dv
-            else:
-                via_soft |= dv
+                softb[l] |= dilate(tier[l], R)
+            via_soft |= dilate(tier[0] | tier[1], (VIA_DIA / 2 + CLR + r_obs) / G)
         ownmask = self.owner == own
         hardb &= ~ownmask
         softb &= ~ownmask
@@ -410,11 +412,18 @@ class Router:
         for k, (l, y, x) in enumerate(path):
             px, py = x * G, y * G
             if k > 0 and l != path[k - 1][0]:
+                for ll in range(2):
+                    o = int(self.owner[ll, y, x])
+                    if o > 0 and o != own and DEBUG:
+                        import traceback
+                        print(f"!! via of net {net} placed on cell owned by net {o - 1} ({self.nets[o - 1].name if o - 1 < len(self.nets) else 'pseudo'}) layer {ll} at {px},{py} r={self.radius[ll, y, x]} stub={self.stub[ll, y, x]}")
+                        traceback.print_stack(limit=4)
                 vias.append(Via(net, px, py, VIA_DRILL, VIA_DIA))
                 self.is_via[y, x] = True
                 for ll in range(2):
                     self.owner[ll, y, x] = own
                     self.radius[ll, y, x] = VIA_DIA / 2
+                    self.stub[ll, y, x] = False  # a via on an escape cell is a via, not a thin stub
                 if len(run) >= 2:
                     traces.append(Trace(net, "F.Cu" if run_layer == 0 else "B.Cu", w, _simplify(run)))
                 run = [(px, py)]
@@ -428,6 +437,9 @@ class Router:
                 self.owner[l, y, x] = own
                 if not self.is_via[y, x]:
                     self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(w / 2))
+            elif DEBUG:
+                o = int(self.owner[l, y, x])
+                print(f"!! trace of {net} over cell owned by {self.nets[o - 1].name if o - 1 < len(self.nets) else 'pseudo'} layer {l} at {px},{py} stub={self.stub[l, y, x]} via={self.is_via[y, x]}")
         if end_pt is not None:
             run.append(end_pt)
         if len(run) >= 2:
@@ -480,6 +492,12 @@ class Router:
                     self.owner[ll, j, i] = ni + 1
                     self.radius[ll, j, i] = VIA_DIA / 2
         self.ripups += 1
+        if DEBUG:
+            for v in self.b.vias:
+                i, j = self._cell(v.x, v.y)
+                vn = next(k for k, n in enumerate(self.nets) if n.name == v.net)
+                if self.owner[0, j, i] != vn + 1 or self.owner[1, j, i] != vn + 1 or not self.is_via[j, i]:
+                    print(f"!! after ripup({self.nets[ni].name}): via {v.net} at {v.x},{v.y} lost grid marks: owners {self.owner[0, j, i]},{self.owner[1, j, i]} is_via={self.is_via[j, i]}")
         self.emit({"type": "ripup", "net": self.nets[ni].name,
                    "traces": sum(len(r.traces) for r in gone), "vias": sum(len(r.vias) for r in gone)})
         return gone
@@ -487,14 +505,15 @@ class Router:
     def _crossed_nets(self, path, w: float) -> set[int]:
         """Nets whose traces/vias lie within clearance of the path (used after a soft route)."""
         crossed = set()
-        R = int(math.ceil((w / 2 + CLR + VIA_DIA / 2) / G))
+        R = int(math.ceil((max(w / 2, VIA_DIA / 2) + CLR + VIA_DIA / 2) / G))
         for (l, y, x) in path:
             y0, y1 = max(0, y - R), min(self.ny, y + R + 1)
             x0, x1 = max(0, x - R), min(self.nx, x + R + 1)
             for ll in range(2):
                 sub = self.owner[ll, y0:y1, x0:x1]
                 rad = self.radius[ll, y0:y1, x0:x1]
-                for v in np.unique(sub[(sub > 0) & (rad > 0.1)]):
+                stb = self.stub[ll, y0:y1, x0:x1]
+                for v in np.unique(sub[(sub > 0) & (rad > 0) & ~stb]):
                     crossed.add(int(v) - 1)
         return {c for c in crossed if c < len(self.nets)}
 
@@ -638,9 +657,16 @@ class Router:
                     self.ripup(cn)
                     to_reroute.append(cn)
         if path is None:
-            self.emit({"type": "route_fail", "net": self.nets[ni].name, "reason": f"no via spot near {pin.comp.ref}.{pin.pad.num}"})
-            self.failed.append(self.nets[ni].name)
-            return False
+            # fallback: join existing GND copper on the top layer (another pad's stub / via) instead of dropping a new via
+            blob = (self.owner == ni + 1) & (self.radius > 0)
+            for l, y, x in starts:
+                blob[l, y, x] = False
+            if blob.any():
+                path = self._route_pin_to_blob(ni, pin, blob, w, soft=False)
+            if path is None:
+                self.emit({"type": "route_fail", "net": self.nets[ni].name, "reason": f"no via spot near {pin.comp.ref}.{pin.pad.num}"})
+                self.failed.append(self.nets[ni].name)
+                return False
         self._commit(ni, w, path, start_pt=pin.center, pin_key=pin.key)
         for cn in to_reroute:
             if self.nets[cn].cls == "gnd":
@@ -776,16 +802,21 @@ class Router:
             self.route_net(i)
             routed += 1
             self._progress(routed, total)
-        # second chance for anything that failed (board state has changed since)
-        retry = sorted(set(self.failed))
-        self.failed = []
-        for name in retry:
-            ni = next(i for i, n in enumerate(self.nets) if n.name == name)
-            if self.nets[ni].cls == "gnd":
-                self._route_all_gnd_stubs()
-            else:
+        # second chances for anything that failed (board state has changed since); up to 3 passes
+        for _pass in range(2):
+            retry = sorted(set(self.failed))
+            if not retry or self.time_left() < 10:
+                break
+            self.failed = []
+            for name in retry:
+                ni = next(i for i, n in enumerate(self.nets) if n.name == name)
+                if self.nets[ni].cls == "gnd":
+                    self._route_all_gnd_stubs()
+                    continue
                 self.ripup(ni)
                 self.route_net(ni)
+            if len(set(self.failed)) >= len(retry):
+                break
         labels, main, orphans = self.pour_islands()
         healed = 0
         if orphans and self.gnd_idx is not None:
@@ -812,6 +843,29 @@ class Router:
         self._progress(total, total)
         return {"routed": routed, "total": total, "failed": sorted(set(self.failed)), "orphan_gnd": len(orphans),
                 "length_mm": round(sum(t.length for t in b.traces), 1), "vias": len(b.vias), "ripups": self.ripups}
+
+    def _neighbour_nets(self, ni: int, margin: float) -> list[int]:
+        """Routed nets with copper inside the (expanded) bounding box of net ni's pins."""
+        pins = [self.pins[p] for p in self.nets[ni].pins if p in self.pins]
+        if not pins:
+            return []
+        xs = [p.center[0] for p in pins]
+        ys = [p.center[1] for p in pins]
+        i0, j0 = self._cell(max(0.0, min(xs) - margin), max(0.0, min(ys) - margin))
+        i1, j1 = self._cell(min(self.b.width, max(xs) + margin), min(self.b.height, max(ys) + margin))
+        sub = self.owner[:, j0:j1 + 1, i0:i1 + 1]
+        rad = self.radius[:, j0:j1 + 1, i0:i1 + 1]
+        stb = self.stub[:, j0:j1 + 1, i0:i1 + 1]
+        ids = np.unique(sub[(sub > 0) & (rad > 0) & ~stb])
+        out = [int(v) - 1 for v in ids if 0 < int(v) - 1 + 1 <= len(self.nets) and int(v) - 1 != ni]
+        out = [cn for cn in out if self.routes.get(cn)]
+        # short nets first when re-routing
+        def hp(cn):
+            ps = [self.pins[p] for p in self.nets[cn].pins if p in self.pins]
+            if not ps:
+                return 0
+            return (max(p.center[0] for p in ps) - min(p.center[0] for p in ps)) + (max(p.center[1] for p in ps) - min(p.center[1] for p in ps))
+        return sorted(out, key=hp)
 
     def _progress(self, routed, total):
         self.emit({"type": "routing_progress", "routed": routed, "total": total,

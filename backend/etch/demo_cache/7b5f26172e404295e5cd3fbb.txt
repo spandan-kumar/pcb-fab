@@ -1,0 +1,118 @@
+## Reasoning
+
+**Requirements → architecture.** 12 V industrial input, RS‑485 field bus, one relay output, 1‑Wire temperature probe, Wi‑Fi via ESP32‑WROOM‑32E. Single MCU, two-stage power tree as specified.
+
+**Power tree.** Barrel jack → 12 V rail (≈250 mA) → MP1584 buck to 5 V. MP1584 is non‑synchronous: 10 µH inductor, SS34 catch diode SW→GND, 100 nF bootstrap BST→SW, 10 µF/25 V input, 22 µF output. FB ref is 0.8 V: 100 k / 19.1 k gives 4.99 V. FREQ 100 k → ~570 kHz, EN via 100 k to VIN (EN abs‑max 6 V so the resistor is mandatory), 3.3 nF on COMP. 5 V budget: relay coil 72 mA + AP2112K input ≈ 700 mA peak. AP2112K‑3.3 (600 mA) feeds the 3V3 rail (ESP32 Wi‑Fi bursts ≈500 mA); 22 µF on its input (shared 5 V bulk) and 10 µF + 100 nF at the module. Dissipation (5−3.3)·0.5 = 0.85 W at peak — acceptable only because average draw is ~150 mA; flagged in notes.
+
+**MCU & I/O map.** EN: 10 k pull‑up + 100 nF + reset button. IO0 boot button. UART0 (IO1/IO3) ↔ CH340C. UART2: IO17 → MAX485 DI, IO16 ← RO, IO4 → DE+RE. IO26 drives relay MOSFET gate (10 k pull‑down keeps relay off during boot). IO27 = DS18B20 DQ with 4.7 k pull‑up to 3V3. IO12 left unused (boot strapping).
+
+**Peripherals.** MAX485 is run from 3V3 so RO never drives 5 V into the ESP32; DI/DE thresholds are TTL (2.0 V) so 3.3 V logic drives it fine. A/B/GND on a 3‑pin screw terminal. Relay: coil from 5 V, low side switched by AO3400, 1N4148 (SOD‑123) flyback across the coil; COM/NO/NC to a 3‑pin screw terminal.
+
+**Protection / programming.** USB‑C with 2×5.1 k CC pull‑downs, USBLC6 TVS on D+/D−/VBUS, CH340C powered from 3V3 (V3 tied to VCC, 100 nF). VBUS is left unloaded so the 12 V supply must be present while flashing.
+
+**Trade‑offs.** To stay at 38 parts I omitted the barrel reverse‑protection Schottky (jack is polarized; MP1584 tolerates 30 V), the 120 Ω bus terminator (add only at bus ends), and a second GPIO status LED — one green power LED is fitted.
+
+```json
+{
+  "name": "RS485Node",
+  "tagline": "ESP32 RS-485 sensor node with relay output and DS18B20 probe, 12 V powered",
+  "summary": "A small industrial controller board that talks over an RS-485 wire bus and Wi-Fi, reads a waterproof temperature probe, and can switch a load through an on-board relay. It runs from a 12 V adapter and is programmed over a USB-C port.",
+  "board": {"width": 72, "height": 52, "mounting_holes": true},
+  "power": {
+    "input": "12 V DC barrel jack",
+    "rails": [
+      {"net": "VIN12", "voltage": 12.0, "current_ma": 300},
+      {"net": "5V", "voltage": 5.0, "current_ma": 700},
+      {"net": "3V3", "voltage": 3.3, "current_ma": 500},
+      {"net": "VBUS", "voltage": 5.0, "current_ma": 50}
+    ]
+  },
+  "components": [
+    {"ref": "J1", "part": "usb-c-16p", "value": "", "purpose": "USB-C programming port"},
+    {"ref": "J2", "part": "barrel-jack", "value": "12V", "purpose": "12 V DC input"},
+    {"ref": "J3", "part": "screw-3", "value": "A/B/GND", "purpose": "RS-485 bus: A, B, GND"},
+    {"ref": "J4", "part": "screw-3", "value": "COM/NO/NC", "purpose": "Relay contacts COM, NO, NC"},
+    {"ref": "J5", "part": "header-1x3", "value": "GND/DQ/3V3", "purpose": "DS18B20 probe: GND, DQ, VDD"},
+    {"ref": "U1", "part": "esp32-wroom-32e", "value": "", "purpose": "Main MCU with Wi-Fi"},
+    {"ref": "U2", "part": "mp1584", "value": "5V", "purpose": "12 V to 5 V buck converter"},
+    {"ref": "U3", "part": "ap2112k-3.3", "value": "3.3V", "purpose": "5 V to 3.3 V LDO"},
+    {"ref": "U4", "part": "ch340c", "value": "", "purpose": "USB-UART bridge for programming"},
+    {"ref": "U5", "part": "max485", "value": "", "purpose": "RS-485 transceiver"},
+    {"ref": "K1", "part": "relay-srd-5v", "value": "SRD-05VDC", "purpose": "Relay output"},
+    {"ref": "Q1", "part": "ao3400", "value": "", "purpose": "Low-side relay coil driver"},
+    {"ref": "D1", "part": "d-sma", "value": "SS34", "purpose": "Buck catch diode SW to GND"},
+    {"ref": "D2", "part": "d-sod123", "value": "1N4148", "purpose": "Relay coil flyback diode"},
+    {"ref": "D3", "part": "tvs-usblc6", "value": "", "purpose": "USB ESD protection"},
+    {"ref": "D4", "part": "led-0603", "value": "green", "purpose": "3.3 V power LED"},
+    {"ref": "L1", "part": "l-4x4", "value": "10uH", "purpose": "Buck inductor"},
+    {"ref": "SW1", "part": "sw-tact-smd", "value": "BOOT", "purpose": "IO0 boot button"},
+    {"ref": "SW2", "part": "sw-tact-smd", "value": "RESET", "purpose": "EN reset button"},
+    {"ref": "R1", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC1 pull-down"},
+    {"ref": "R2", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC2 pull-down"},
+    {"ref": "R3", "part": "r-0603", "value": "10k", "purpose": "ESP32 EN pull-up"},
+    {"ref": "R4", "part": "r-0603", "value": "100k", "purpose": "Buck FB divider top"},
+    {"ref": "R5", "part": "r-0603", "value": "19.1k", "purpose": "Buck FB divider bottom"},
+    {"ref": "R6", "part": "r-0603", "value": "100k", "purpose": "Buck FREQ set resistor"},
+    {"ref": "R7", "part": "r-0603", "value": "100k", "purpose": "Buck EN pull-up to VIN"},
+    {"ref": "R8", "part": "r-0603", "value": "10k", "purpose": "MOSFET gate pull-down"},
+    {"ref": "R9", "part": "r-0603", "value": "4.7k", "purpose": "1-Wire DQ pull-up"},
+    {"ref": "R10", "part": "r-0603", "value": "1k", "purpose": "Power LED series resistor"},
+    {"ref": "C1", "part": "c-0805", "value": "10uF", "purpose": "3V3 bulk / LDO output cap"},
+    {"ref": "C2", "part": "c-0603", "value": "100nF", "purpose": "ESP32 3V3 decoupling"},
+    {"ref": "C3", "part": "c-0603", "value": "100nF", "purpose": "ESP32 EN RC delay"},
+    {"ref": "C4", "part": "c-0805", "value": "10uF", "purpose": "Buck input cap, 25 V rated"},
+    {"ref": "C5", "part": "c-0805", "value": "22uF", "purpose": "5V bulk / buck output cap"},
+    {"ref": "C6", "part": "c-0603", "value": "100nF", "purpose": "Buck bootstrap cap"},
+    {"ref": "C7", "part": "c-0603", "value": "3.3nF", "purpose": "Buck COMP compensation"},
+    {"ref": "C8", "part": "c-0603", "value": "100nF", "purpose": "CH340C VCC/V3 decoupling"},
+    {"ref": "C9", "part": "c-0603", "value": "100nF", "purpose": "MAX485 VCC decoupling"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["U1.1", "U1.15", "U1.38", "U1.39", "U2.6", "U3.2", "U4.1", "U5.5", "Q1.2", "D1.2", "D3.2", "D4.1", "J1.A1B12", "J1.B1A12", "J1.S1", "J1.S2", "J1.S3", "J1.S4", "J2.2", "J3.3", "J5.1", "SW1.3", "SW2.3", "R1.2", "R2.2", "R5.2", "R6.2", "R8.2", "C1.2", "C2.2", "C3.2", "C4.2", "C5.2", "C7.2", "C8.2", "C9.2"]},
+    {"name": "VIN12", "cls": "power", "pins": ["J2.1", "C4.1", "U2.7", "R7.1"]},
+    {"name": "5V", "cls": "power", "pins": ["L1.2", "C5.1", "R4.1", "U3.1", "U3.3", "K1.1", "D2.1"]},
+    {"name": "3V3", "cls": "power", "pins": ["U3.5", "C1.1", "C2.1", "U1.2", "R3.1", "U4.16", "U4.4", "C8.1", "U5.8", "C9.1", "R9.1", "R10.1", "J5.3"]},
+    {"name": "VBUS", "cls": "power", "pins": ["J1.A4B9", "J1.B4A9", "D3.5"]},
+    {"name": "BUCK_EN", "cls": "signal", "pins": ["U2.2", "R7.2"]},
+    {"name": "BUCK_SW", "cls": "signal", "pins": ["U2.1", "L1.1", "D1.1", "C6.1"]},
+    {"name": "BUCK_BST", "cls": "signal", "pins": ["U2.8", "C6.2"]},
+    {"name": "BUCK_FB", "cls": "analog", "pins": ["U2.4", "R4.2", "R5.1"]},
+    {"name": "BUCK_FREQ", "cls": "signal", "pins": ["U2.5", "R6.1"]},
+    {"name": "BUCK_COMP", "cls": "analog", "pins": ["U2.3", "C7.1"]},
+    {"name": "ESP_EN", "cls": "signal", "pins": ["U1.3", "R3.2", "C3.1", "SW2.1"]},
+    {"name": "ESP_IO0", "cls": "signal", "pins": ["U1.25", "SW1.1"]},
+    {"name": "ESP_RXD0", "cls": "signal", "pins": ["U1.34", "U4.2"]},
+    {"name": "ESP_TXD0", "cls": "signal", "pins": ["U1.35", "U4.3"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J1.A6", "J1.B6", "D3.1", "D3.6", "U4.5"]},
+    {"name": "USB_DM", "cls": "highspeed", "pins": ["J1.A7", "J1.B7", "D3.3", "D3.4", "U4.6"]},
+    {"name": "USB_CC1", "cls": "signal", "pins": ["J1.A5", "R1.1"]},
+    {"name": "USB_CC2", "cls": "signal", "pins": ["J1.B5", "R2.1"]},
+    {"name": "RS485_DI", "cls": "signal", "pins": ["U1.28", "U5.4"]},
+    {"name": "RS485_RO", "cls": "signal", "pins": ["U1.27", "U5.1"]},
+    {"name": "RS485_DE", "cls": "signal", "pins": ["U1.26", "U5.2", "U5.3"]},
+    {"name": "RS485_A", "cls": "signal", "pins": ["U5.6", "J3.1"]},
+    {"name": "RS485_B", "cls": "signal", "pins": ["U5.7", "J3.2"]},
+    {"name": "RELAY_GATE", "cls": "signal", "pins": ["U1.11", "Q1.1", "R8.1"]},
+    {"name": "RELAY_COIL", "cls": "signal", "pins": ["Q1.3", "K1.2", "D2.2"]},
+    {"name": "RELAY_COM", "cls": "signal", "pins": ["K1.3", "J4.1"]},
+    {"name": "RELAY_NO", "cls": "signal", "pins": ["K1.4", "J4.2"]},
+    {"name": "RELAY_NC", "cls": "signal", "pins": ["K1.5", "J4.3"]},
+    {"name": "OW_DQ", "cls": "signal", "pins": ["U1.12", "J5.2", "R9.2"]},
+    {"name": "PWR_LED", "cls": "signal", "pins": ["R10.2", "D4.2"]}
+  ],
+  "notes": [
+    "MP1584 FB reference is 0.8 V; R4/R5 = 100k/19.1k sets Vout = 4.99 V. Switching frequency ~570 kHz with R6 = 100k. C4 must be a 25 V-rated 10 uF 0805.",
+    "MP1584 EN is fed through R7 (100k) because the pin's absolute maximum is 6 V; do not tie EN directly to 12 V.",
+    "AP2112K-3.3 input cap is the shared 22 uF 5V bulk (C5) placed adjacent to U3; C1 (10 uF) is the LDO output cap and ESP32 bulk cap. Peak dissipation at 500 mA Wi-Fi bursts is ~0.85 W; average load is ~150 mA. If Wi-Fi is continuously active consider a larger LDO (AMS1117) or a second buck.",
+    "MAX485 is powered from 3V3 (spec is 4.75-5.25 V) so its RO output is safe for the ESP32; it works reliably in practice at 3.3 V, but MAX3485 is the drop-in 3.3 V-rated part for production. DE and RE are tied together and driven by IO4 (high = transmit).",
+    "No 120 R bus terminator is fitted: add one externally only if this node is at a physical end of the RS-485 bus. Consider adding a bidirectional TVS (SMBJ) across A/B for surge protection in harsh installs.",
+    "Relay coil is driven low-side by Q1 (AO3400) from IO26 with a 10k gate pull-down so the relay stays off during boot; D2 (1N4148 SOD-123) is the flyback across the coil. Keep contact traces (J4) >= 1 mm wide and isolated from logic.",
+    "CH340C is powered from the 3V3 rail (V3 tied to VCC) so USB VBUS is unloaded; the 12 V supply must be present while flashing. Auto-reset transistors are not fitted: hold BOOT, tap RESET to enter download mode.",
+    "Barrel jack reverse-polarity Schottky omitted to meet the part-count limit; the DC-005 jack is mechanically polarized and MP1584 withstands 30 V. Add an SS34 in series with J2 pin 1 (or a P-MOSFET) for field-robust units.",
+    "Only one LED (green power) fitted to respect the 38-part limit; IO2 is free for a firmware status LED (1k + LED) if desired.",
+    "DS18B20 header pinout GND / DQ / 3V3 with 4.7k pull-up on DQ; supports one or more probes on IO27 (1-Wire).",
+    "Keep ESP32 antenna at the board edge with no copper underneath; place the relay and screw terminals on the opposite edge."
+  ],
+  "estimated_cost_usd": 8.9
+}
+```

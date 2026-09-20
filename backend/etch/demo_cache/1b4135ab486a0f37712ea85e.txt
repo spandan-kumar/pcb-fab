@@ -1,0 +1,88 @@
+## Reasoning
+
+**Requirements → architecture.** Single ESP32-S3-WROOM-1 module does everything: native USB (IO19/IO20) removes the need for a CH340, giving a cleaner programming path; Wi-Fi is available for later upload of logs. Peripherals are all low-speed: I2C bus shared by the DS3231 RTC and ADS1115 ADC, and a dedicated SPI bus for the microSD slot. Everything runs at 3.3 V, so no level shifting.
+
+**Power tree.** USB-C VBUS (5 V) → USBLC6-2 TVS protects VBUS/D+/D− → AMS1117-3.3 LDO (1 A capable) → 3V3. Budget: ESP32-S3 Wi-Fi peak ≈ 500 mA, microSD write bursts ≈ 100 mA, DS3231 + ADS1115 < 1 mA — so ~600 mA peak on 3V3; the AMS1117 dissipates (5 − 3.3) × 0.6 ≈ 1 W worst case, acceptable in SOT-223 on a copper pour. 10 µF on LDO input and output, plus a second 10 µF + 100 nF at the module and 10 µF + 100 nF at the SD slot (card insertion transients). Two separate 5.1 k CC pull-downs advertise a UFP sink.
+
+**MCU & I/O map.** IO19/IO20 → USB D−/D+ (highspeed nets, kept short). IO0 → BOOT button, EN → RESET button with 10 k pull-up + 100 nF. I2C: IO8 = SDA, IO9 = SCL with 4.7 k pull-ups (both slaves are on the same bus; DS3231 at 0x68, ADS1115 at 0x48 with ADDR grounded). SPI: IO10 CS (10 k pull-up so the card is deselected during boot), IO11 MOSI, IO12 SCK, IO13 MISO. IO14 ← DS3231 INT/SQW (open-drain, 10 k pull-up) for alarm-triggered wake logging. IO21 → user LED via 1 k (~1.5 mA). IO35–37 avoided (octal-PSRAM variants).
+
+**Peripherals.** DS3231: VBAT to a CR2032 holder for timekeeping across power loss; 100 nF on VCC. ADS1115: differential/single-ended pair AIN0/AIN1 on a 3-way screw terminal (AIN0, AIN1, GND); unused AIN2/AIN3 tied to GND so they don't float; 100 nF on VDD. microSD wired as 1-bit SPI with shield pads grounded.
+
+**Trade-offs.** No USB series resistors (module tolerates direct connection). Analog inputs have no series protection — add 100 R + clamp if inputs exceed ±0.3 V beyond rails. 33 parts, 70 × 50 mm, comfortably routable on 2 layers.
+
+```json
+{
+  "name": "S3Logger",
+  "tagline": "ESP32-S3 data logger with microSD, RTC backup and 16-bit ADC input",
+  "summary": "A USB-C powered logging board built around an ESP32-S3 module. It timestamps 16-bit analog readings from a screw-terminal input using a battery-backed real-time clock and stores them on a microSD card, with programming and power over a single USB-C cable.",
+  "board": {"width": 70, "height": 50, "mounting_holes": true},
+  "power": {"input": "USB-C 5 V", "rails": [{"net": "5V", "voltage": 5.0, "current_ma": 700}, {"net": "3V3", "voltage": 3.3, "current_ma": 600}]},
+  "components": [
+    {"ref": "U1", "part": "esp32-s3-wroom-1", "value": "", "purpose": "Main MCU with native USB and Wi-Fi"},
+    {"ref": "U2", "part": "ams1117-3.3", "value": "3.3V", "purpose": "5 V to 3.3 V LDO, 1 A headroom"},
+    {"ref": "U3", "part": "ds3231", "value": "", "purpose": "I2C real-time clock with battery backup"},
+    {"ref": "U4", "part": "ads1115", "value": "", "purpose": "16-bit I2C ADC for analog input"},
+    {"ref": "J1", "part": "usb-c-16p", "value": "", "purpose": "USB-C power and native USB programming"},
+    {"ref": "J2", "part": "microsd", "value": "", "purpose": "microSD card slot over SPI"},
+    {"ref": "J3", "part": "screw-3", "value": "", "purpose": "Analog input: AIN0, AIN1, GND"},
+    {"ref": "J4", "part": "cr2032", "value": "", "purpose": "CR2032 backup battery for RTC"},
+    {"ref": "D1", "part": "tvs-usblc6", "value": "", "purpose": "ESD protection on USB D+/D-/VBUS"},
+    {"ref": "D2", "part": "led-0603", "value": "green", "purpose": "3V3 power indicator"},
+    {"ref": "D3", "part": "led-0603", "value": "blue", "purpose": "User status LED on IO21"},
+    {"ref": "SW1", "part": "sw-tact-smd", "value": "", "purpose": "BOOT button, IO0 to GND"},
+    {"ref": "SW2", "part": "sw-tact-smd", "value": "", "purpose": "RESET button, EN to GND"},
+    {"ref": "R1", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC1 pull-down"},
+    {"ref": "R2", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC2 pull-down"},
+    {"ref": "R3", "part": "r-0603", "value": "1k", "purpose": "Power LED series resistor"},
+    {"ref": "R4", "part": "r-0603", "value": "1k", "purpose": "User LED series resistor"},
+    {"ref": "R5", "part": "r-0603", "value": "10k", "purpose": "EN pull-up"},
+    {"ref": "R6", "part": "r-0603", "value": "4.7k", "purpose": "I2C SDA pull-up"},
+    {"ref": "R7", "part": "r-0603", "value": "4.7k", "purpose": "I2C SCL pull-up"},
+    {"ref": "R10", "part": "r-0603", "value": "10k", "purpose": "microSD CS pull-up"},
+    {"ref": "R11", "part": "r-0603", "value": "10k", "purpose": "DS3231 INT open-drain pull-up"},
+    {"ref": "C1", "part": "c-0805", "value": "10uF", "purpose": "LDO input bulk cap"},
+    {"ref": "C2", "part": "c-0805", "value": "10uF", "purpose": "LDO output bulk cap"},
+    {"ref": "C3", "part": "c-0603", "value": "100nF", "purpose": "ESP32-S3 3V3 decoupling"},
+    {"ref": "C4", "part": "c-0805", "value": "10uF", "purpose": "ESP32-S3 3V3 bulk cap"},
+    {"ref": "C5", "part": "c-0603", "value": "100nF", "purpose": "EN reset delay cap"},
+    {"ref": "C6", "part": "c-0603", "value": "100nF", "purpose": "DS3231 VCC decoupling"},
+    {"ref": "C7", "part": "c-0603", "value": "100nF", "purpose": "ADS1115 VDD decoupling"},
+    {"ref": "C8", "part": "c-0603", "value": "100nF", "purpose": "microSD VDD decoupling"},
+    {"ref": "C9", "part": "c-0805", "value": "10uF", "purpose": "microSD VDD bulk cap"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["U1.1", "U1.40", "U1.41", "U2.1", "U3.13", "U4.1", "U4.3", "U4.6", "U4.7", "J1.A1B12", "J1.B1A12", "J1.S1", "J1.S2", "J1.S3", "J1.S4", "J2.6", "J2.S1", "J2.S2", "J2.S3", "J2.S4", "J3.3", "J4.2", "D1.2", "D2.1", "D3.1", "SW1.3", "SW2.3", "R1.2", "R2.2", "C1.2", "C2.2", "C3.2", "C4.2", "C5.2", "C6.2", "C7.2", "C8.2", "C9.2"]},
+    {"name": "5V", "cls": "power", "pins": ["J1.A4B9", "J1.B4A9", "D1.5", "U2.3", "C1.1"]},
+    {"name": "3V3", "cls": "power", "pins": ["U2.2", "U2.4", "C2.1", "U1.2", "C3.1", "C4.1", "U3.2", "C6.1", "U4.8", "C7.1", "J2.4", "C8.1", "C9.1", "R3.1", "R5.1", "R6.1", "R7.1", "R10.1", "R11.1"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J1.A6", "J1.B6", "D1.1", "D1.6", "U1.14"]},
+    {"name": "USB_DM", "cls": "highspeed", "pins": ["J1.A7", "J1.B7", "D1.3", "D1.4", "U1.13"]},
+    {"name": "CC1", "cls": "signal", "pins": ["J1.A5", "R1.1"]},
+    {"name": "CC2", "cls": "signal", "pins": ["J1.B5", "R2.1"]},
+    {"name": "EN", "cls": "signal", "pins": ["U1.3", "R5.2", "C5.1", "SW2.1"]},
+    {"name": "IO0_BOOT", "cls": "signal", "pins": ["U1.27", "SW1.1"]},
+    {"name": "SDA", "cls": "signal", "pins": ["U1.12", "R6.2", "U3.15", "U4.9"]},
+    {"name": "SCL", "cls": "signal", "pins": ["U1.17", "R7.2", "U3.16", "U4.10"]},
+    {"name": "SD_CS", "cls": "signal", "pins": ["U1.18", "J2.2", "R10.2"]},
+    {"name": "SD_MOSI", "cls": "signal", "pins": ["U1.19", "J2.3"]},
+    {"name": "SD_SCK", "cls": "signal", "pins": ["U1.20", "J2.5"]},
+    {"name": "SD_MISO", "cls": "signal", "pins": ["U1.21", "J2.7"]},
+    {"name": "RTC_INT", "cls": "signal", "pins": ["U1.22", "U3.3", "R11.2"]},
+    {"name": "VBAT_RTC", "cls": "signal", "pins": ["U3.14", "J4.1"]},
+    {"name": "AIN0", "cls": "analog", "pins": ["U4.4", "J3.1"]},
+    {"name": "AIN1", "cls": "analog", "pins": ["U4.5", "J3.2"]},
+    {"name": "LED_PWR", "cls": "signal", "pins": ["R3.2", "D2.2"]},
+    {"name": "LED_USR_IO", "cls": "signal", "pins": ["U1.23", "R4.1"]},
+    {"name": "LED_USR", "cls": "signal", "pins": ["R4.2", "D3.2"]}
+  ],
+  "notes": [
+    "Native USB on IO19 (D-) / IO20 (D+); no CH340 needed. Hold BOOT while pressing RESET to enter download mode.",
+    "I2C addresses: DS3231 = 0x68, ADS1115 = 0x48 (ADDR grounded). Both share IO8 (SDA) / IO9 (SCL) with 4.7k pull-ups.",
+    "microSD in 1-bit SPI mode: CS=IO10, MOSI=IO11, SCK=IO12, MISO=IO13. CD, DAT1, DAT2 left unconnected.",
+    "ADS1115 AIN2/AIN3 tied to GND to avoid floating inputs. Add 100R series + clamp diodes if the screw-terminal input can exceed 0..3.3 V.",
+    "AMS1117 dissipates ~1 W at 600 mA; place on a generous copper pour. Swap to a buck if continuous Wi-Fi + SD writes are expected.",
+    "IO35-37 avoided for octal-PSRAM module compatibility.",
+    "CR2032 holder connects only to DS3231 VBAT; DS3231 trickle charger must remain disabled (default) for a non-rechargeable cell."
+  ],
+  "estimated_cost_usd": 8.6
+}
+```

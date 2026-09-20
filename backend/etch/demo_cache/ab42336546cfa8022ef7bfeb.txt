@@ -1,0 +1,106 @@
+## Reasoning
+
+**Requirements → architecture.** A classic Arduino-Nano-class board: ATmega328P-AU running at 5 V / 16 MHz, programmed over USB-C through a CH340C with DTR auto-reset, plus ICSP for bootloader burning. Single MCU, no wireless, so a 2-layer board is easy.
+
+**Power tree.** USB-C VBUS (5 V, budget 500 mA) is the main rail; it feeds the ATmega (≈15 mA active), the CH340C (≈12 mA) and the AMS1117-3.3 LDO. The 3V3 rail is for user shields only, budgeted at 300 mA (dissipation (5−3.3)×0.3 ≈ 0.5 W, fine for SOT-223 with a copper pour). 10 µF bulk on both rails, 100 nF on each of the three ATmega supply pins (VCC×2, AVCC). USBLC6-2SC6 TVS clamps D+/D−/VBUS; two independent 5.1 k CC pull-downs advertise a UFP sink.
+
+**MCU & I/O map.** 16 MHz HC-49S crystal on XTAL1/XTAL2 with 2×22 pF. RESET has a 10 k pull-up, a tactile button, and the CH340 DTR line couples through 100 nF to pulse RESET low when avrdude opens the port (standard Arduino auto-reset). UART: CH340 TXD→PD0/RX, CH340 RXD←PD1/TX. TX/RX LEDs hang off those lines through 1 k to 5 V (≈3 mA, light when the line goes low, exactly like the Nano). Power LED: 1 k from 5 V.
+
+**Headers.** J3 (1×10) carries D0–D9 in order; J4 (1×8) carries D10–D13 (SPI) and A0–A3. The brief only named those two headers, but A4/A5 (I²C), RESET and the rails would otherwise be stranded, so a small 1×6 J5 exposes SDA, SCL, 3V3, 5V, GND, RESET — flagged in notes. ICSP 2×3 uses the standard MISO/VCC/SCK/MOSI/RESET/GND pinout.
+
+**Trade-offs.** No VBUS fuse (USB host already current-limits; adding one costs one net class exception). AREF left floating (internal reference default) to save parts; ADC6/ADC7 not broken out since the brief's header count doesn't allow it. 30 components total, ~62×42 mm — Nano-sized but with proper USB-C, TVS and a full 3.3 V rail.
+
+```json
+{
+  "name": "Uno328C",
+  "tagline": "Arduino-compatible ATmega328P board with USB-C CH340C serial and 3.3 V rail",
+  "summary": "A compact Arduino-compatible microcontroller board. Plug it into USB-C to program it from the Arduino IDE; all digital and analog pins are on headers, with both 5 V and 3.3 V available for sensors and shields.",
+  "board": {"width": 62, "height": 42, "mounting_holes": true},
+  "power": {
+    "input": "USB-C 5 V",
+    "rails": [
+      {"net": "5V", "voltage": 5.0, "current_ma": 500},
+      {"net": "3V3", "voltage": 3.3, "current_ma": 300}
+    ]
+  },
+  "components": [
+    {"ref": "U1", "part": "atmega328p-au", "value": "", "purpose": "Main microcontroller, Arduino Uno compatible"},
+    {"ref": "U2", "part": "ch340c", "value": "", "purpose": "USB-to-UART bridge for programming and serial"},
+    {"ref": "U3", "part": "ams1117-3.3", "value": "", "purpose": "5 V to 3.3 V LDO for user rail"},
+    {"ref": "J1", "part": "usb-c-16p", "value": "", "purpose": "USB-C power and data input"},
+    {"ref": "D1", "part": "tvs-usblc6", "value": "", "purpose": "ESD protection on USB D+/D-/VBUS"},
+    {"ref": "R1", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC1 pull-down"},
+    {"ref": "R2", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC2 pull-down"},
+    {"ref": "Y1", "part": "xtal-hc49", "value": "16MHz", "purpose": "MCU clock crystal"},
+    {"ref": "C1", "part": "c-0603", "value": "22pF", "purpose": "Crystal load cap XTAL1"},
+    {"ref": "C2", "part": "c-0603", "value": "22pF", "purpose": "Crystal load cap XTAL2"},
+    {"ref": "C3", "part": "c-0603", "value": "100nF", "purpose": "Decoupling MCU VCC pin 4"},
+    {"ref": "C4", "part": "c-0603", "value": "100nF", "purpose": "Decoupling MCU VCC pin 6"},
+    {"ref": "C5", "part": "c-0603", "value": "100nF", "purpose": "Decoupling MCU AVCC"},
+    {"ref": "C6", "part": "c-0805", "value": "10uF", "purpose": "Bulk cap 5V rail / LDO input"},
+    {"ref": "C7", "part": "c-0603", "value": "100nF", "purpose": "DTR auto-reset coupling cap"},
+    {"ref": "C8", "part": "c-0603", "value": "100nF", "purpose": "CH340C V3 internal regulator cap"},
+    {"ref": "C9", "part": "c-0603", "value": "100nF", "purpose": "Decoupling CH340C VCC"},
+    {"ref": "C11", "part": "c-0805", "value": "10uF", "purpose": "LDO output bulk cap 3V3"},
+    {"ref": "R3", "part": "r-0603", "value": "10k", "purpose": "RESET pull-up"},
+    {"ref": "SW1", "part": "sw-tact", "value": "", "purpose": "Reset button"},
+    {"ref": "D2", "part": "led-0603", "value": "green", "purpose": "Power indicator LED"},
+    {"ref": "R4", "part": "r-0603", "value": "1k", "purpose": "Power LED series resistor"},
+    {"ref": "D3", "part": "led-0603", "value": "yellow", "purpose": "TX activity LED"},
+    {"ref": "R5", "part": "r-0603", "value": "1k", "purpose": "TX LED series resistor"},
+    {"ref": "D4", "part": "led-0603", "value": "yellow", "purpose": "RX activity LED"},
+    {"ref": "R6", "part": "r-0603", "value": "1k", "purpose": "RX LED series resistor"},
+    {"ref": "J2", "part": "header-2x3-icsp", "value": "", "purpose": "ICSP bootloader programming header"},
+    {"ref": "J3", "part": "header-1x10", "value": "", "purpose": "Digital IO header D0-D9"},
+    {"ref": "J4", "part": "header-1x8", "value": "", "purpose": "Header D10-D13 (SPI) and A0-A3"},
+    {"ref": "J5", "part": "header-1x6", "value": "", "purpose": "SDA, SCL, 3V3, 5V, GND, RESET"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["J1.A1B12", "J1.B1A12", "J1.S1", "J1.S2", "J1.S3", "J1.S4", "D1.2", "R1.2", "R2.2", "U1.3", "U1.5", "U1.21", "C1.2", "C2.2", "C3.2", "C4.2", "C5.2", "C6.2", "SW1.3", "U2.1", "C8.2", "C9.2", "U3.1", "C11.2", "D2.1", "J2.6", "J5.5"]},
+    {"name": "5V", "cls": "power", "pins": ["J1.A4B9", "J1.B4A9", "D1.5", "U1.4", "U1.6", "U1.18", "C3.1", "C4.1", "C5.1", "C6.1", "R3.2", "U2.16", "C9.1", "U3.3", "R4.1", "R5.1", "R6.1", "J2.2", "J5.4"]},
+    {"name": "3V3", "cls": "power", "pins": ["U3.2", "U3.4", "C11.1", "J5.3"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J1.A6", "J1.B6", "D1.1", "D1.6", "U2.5"]},
+    {"name": "USB_DM", "cls": "highspeed", "pins": ["J1.A7", "J1.B7", "D1.3", "D1.4", "U2.6"]},
+    {"name": "CC1", "cls": "signal", "pins": ["J1.A5", "R1.1"]},
+    {"name": "CC2", "cls": "signal", "pins": ["J1.B5", "R2.1"]},
+    {"name": "CH340_V3", "cls": "signal", "pins": ["U2.4", "C8.1"]},
+    {"name": "DTR", "cls": "signal", "pins": ["U2.13", "C7.1"]},
+    {"name": "RESET", "cls": "signal", "pins": ["U1.29", "R3.1", "C7.2", "SW1.1", "J2.5", "J5.6"]},
+    {"name": "XTAL1", "cls": "signal", "pins": ["U1.7", "Y1.1", "C1.1"]},
+    {"name": "XTAL2", "cls": "signal", "pins": ["U1.8", "Y1.2", "C2.1"]},
+    {"name": "D0_RX", "cls": "signal", "pins": ["U1.30", "U2.2", "D4.1", "J3.1"]},
+    {"name": "D1_TX", "cls": "signal", "pins": ["U1.31", "U2.3", "D3.1", "J3.2"]},
+    {"name": "TX_LED_A", "cls": "signal", "pins": ["R5.2", "D3.2"]},
+    {"name": "RX_LED_A", "cls": "signal", "pins": ["R6.2", "D4.2"]},
+    {"name": "PWR_LED_A", "cls": "signal", "pins": ["R4.2", "D2.2"]},
+    {"name": "D2", "cls": "signal", "pins": ["U1.32", "J3.3"]},
+    {"name": "D3", "cls": "signal", "pins": ["U1.1", "J3.4"]},
+    {"name": "D4", "cls": "signal", "pins": ["U1.2", "J3.5"]},
+    {"name": "D5", "cls": "signal", "pins": ["U1.9", "J3.6"]},
+    {"name": "D6", "cls": "signal", "pins": ["U1.10", "J3.7"]},
+    {"name": "D7", "cls": "signal", "pins": ["U1.11", "J3.8"]},
+    {"name": "D8", "cls": "signal", "pins": ["U1.12", "J3.9"]},
+    {"name": "D9", "cls": "signal", "pins": ["U1.13", "J3.10"]},
+    {"name": "D10_SS", "cls": "signal", "pins": ["U1.14", "J4.1"]},
+    {"name": "D11_MOSI", "cls": "signal", "pins": ["U1.15", "J2.4", "J4.2"]},
+    {"name": "D12_MISO", "cls": "signal", "pins": ["U1.16", "J2.1", "J4.3"]},
+    {"name": "D13_SCK", "cls": "signal", "pins": ["U1.17", "J2.3", "J4.4"]},
+    {"name": "A0", "cls": "analog", "pins": ["U1.23", "J4.5"]},
+    {"name": "A1", "cls": "analog", "pins": ["U1.24", "J4.6"]},
+    {"name": "A2", "cls": "analog", "pins": ["U1.25", "J4.7"]},
+    {"name": "A3", "cls": "analog", "pins": ["U1.26", "J4.8"]},
+    {"name": "A4_SDA", "cls": "signal", "pins": ["U1.27", "J5.1"]},
+    {"name": "A5_SCL", "cls": "signal", "pins": ["U1.28", "J5.2"]}
+  ],
+  "notes": [
+    "Brief specified 1x10 + 1x8 headers only; a third 1x6 header (J5) was added so A4/SDA, A5/SCL, 3V3, 5V, GND and RESET are not stranded. Remove J5 if strict pin-count is required.",
+    "J3 pin order: D0(RX), D1(TX), D2, D3, D4, D5, D6, D7, D8, D9. J4 pin order: D10, D11, D12, D13, A0, A1, A2, A3. J5: SDA, SCL, 3V3, 5V, GND, RESET.",
+    "Auto-reset: CH340C DTR couples to RESET via C7 (100 nF); R3 10k pull-up. Burn the Arduino Uno (optiboot) bootloader via J2 ICSP, then select 'Arduino Uno' in the IDE.",
+    "TX/RX LEDs are wired Nano-style across the UART lines (cathode to signal, anode via 1k to 5V) so they flash on activity without extra GPIO.",
+    "AMS1117-3.3 rail budgeted at 300 mA; keep the SOT-223 tab on a generous 5V/GND copper pour for heat. 10 uF on VIN (C6, shared 5V bulk) and VOUT (C11).",
+    "AREF left floating (uses internal reference); ADC6/ADC7 not broken out. USB TVS D1: IO1 pair (pins 1,6) on D+, IO2 pair (pins 3,4) on D-.",
+    "No VBUS fuse; the USB host current-limits. Add a 1206 fuse in series with VBUS if the board will be powered from unregulated 5 V supplies."
+  ],
+  "estimated_cost_usd": 5.6
+}
+```

@@ -1,0 +1,118 @@
+## Reasoning
+
+**Requirements:** STM32F103C8T6 logger, microSD (SPI), DS3231 RTC with CR2032 backup, ADS1115 on screw terminals, USB-C power, SWD, user LED, 3.3 V system.
+
+**Power tree:** USB-C VBUS → 1206 fuse → 5 V node (TVS USBLC6 clamps VBUS and D±) → AP2112K-3.3 LDO (600 mA rated, EN tied to VIN). Load budget on 3V3: STM32 ≈ 40 mA at 72 MHz, microSD up to ~100 mA write bursts, DS3231 < 1 mA, ADS1115 < 1 mA, LEDs ~4 mA → ~150 mA typical, 300 mA rail budget. 10 uF on LDO in/out, plus 10 uF bulk at the MCU and 100 nF at every VDD/VDDA/peripheral supply pin. Two 5.1 k CC pull-downs advertise a UFP sink.
+
+**MCU & I/O map (STM32F103C8T6):**
+- SPI1: PA5 SCK, PA6 MISO, PA7 MOSI, PA4 CS → microSD; PB1 card-detect (internal pull-up in firmware).
+- I2C1: PB6 SCL, PB7 SDA shared by DS3231 (0x68) and ADS1115 (0x48, ADDR→GND), 4.7 k pull-ups to 3V3.
+- PA0 ← DS3231 INT/SQW (alarm wake), PA1 ← ADS1115 ALERT/RDY.
+- PB0 → user LED via 1 k (~2 mA green).
+- PA11/PA12 wired to USB D−/D+ with 1.5 k D+ pull-up so the same USB-C port can also serve CDC log download; TVS sits across those lines.
+- SWD: PA13/PA14 + GND + 3V3 on a 1×4 header; NRST with 100 nF and a reset button; BOOT0 10 k to GND.
+- 8 MHz 3225 crystal, 2× 20 pF; VBAT tied to 3V3 (RTC backup handled by the DS3231 instead).
+
+**Peripherals:** DS3231 VBAT → CR2032 holder (+), 100 nF on VCC. ADS1115 AIN0/AIN1 to a 3-pin screw terminal (AIN0, AIN1, GND) through 1 k series resistors to limit fault current; unused AIN2/AIN3 grounded to avoid floating inputs. microSD VDD gets 100 nF locally and shares the 10 uF bulk cap.
+
+**Trade-offs:** AP2112K chosen over AMS1117 for low dropout and small size; adequate since peak current is well under 600 mA. A microSD 10 uF local bulk and CS pull-up were omitted to stay within the 38-component limit — firmware must configure PA4 high before SD init. Signal input range is 0–3.3 V single-ended (or differential) unless a divider is added.
+
+```json
+{
+  "name": "F103Logger",
+  "tagline": "STM32F103 microSD data logger with RTC and 16-bit ADC",
+  "summary": "A USB-C powered data logger built around an STM32F103 microcontroller. It records readings from a 16-bit ADS1115 ADC (screw-terminal input) to a microSD card, time-stamped by a battery-backed DS3231 real-time clock.",
+  "board": {"width": 66, "height": 46, "mounting_holes": true},
+  "power": {
+    "input": "USB-C 5 V",
+    "rails": [
+      {"net": "VBUS_IN", "voltage": 5.0, "current_ma": 400},
+      {"net": "5V", "voltage": 5.0, "current_ma": 400},
+      {"net": "3V3", "voltage": 3.3, "current_ma": 300}
+    ]
+  },
+  "components": [
+    {"ref": "J1", "part": "usb-c-16p", "value": "", "purpose": "USB-C power input and optional USB CDC"},
+    {"ref": "R1", "part": "r-0603", "value": "5.1k", "purpose": "CC1 pull-down (UFP sink)"},
+    {"ref": "R2", "part": "r-0603", "value": "5.1k", "purpose": "CC2 pull-down (UFP sink)"},
+    {"ref": "F1", "part": "fuse-1206", "value": "1A", "purpose": "VBUS overcurrent protection"},
+    {"ref": "D1", "part": "tvs-usblc6", "value": "", "purpose": "ESD clamp on USB D+/D-/VBUS"},
+    {"ref": "U1", "part": "ap2112k-3.3", "value": "", "purpose": "5V to 3.3V LDO regulator"},
+    {"ref": "C1", "part": "c-0805", "value": "10uF", "purpose": "LDO input capacitor"},
+    {"ref": "C2", "part": "c-0805", "value": "10uF", "purpose": "LDO output capacitor"},
+    {"ref": "U2", "part": "stm32f103c8t6", "value": "", "purpose": "Main microcontroller"},
+    {"ref": "Y1", "part": "xtal-3225", "value": "8MHz", "purpose": "HSE crystal for STM32"},
+    {"ref": "C3", "part": "c-0603", "value": "20pF", "purpose": "Crystal load cap OSC_IN"},
+    {"ref": "C4", "part": "c-0603", "value": "20pF", "purpose": "Crystal load cap OSC_OUT"},
+    {"ref": "C5", "part": "c-0603", "value": "100nF", "purpose": "Decoupling VDD pin 24"},
+    {"ref": "C6", "part": "c-0603", "value": "100nF", "purpose": "Decoupling VDD pin 36"},
+    {"ref": "C7", "part": "c-0603", "value": "100nF", "purpose": "Decoupling VDD pin 48"},
+    {"ref": "C8", "part": "c-0603", "value": "100nF", "purpose": "Decoupling VDDA"},
+    {"ref": "C9", "part": "c-0603", "value": "100nF", "purpose": "NRST filter capacitor"},
+    {"ref": "C10", "part": "c-0805", "value": "10uF", "purpose": "3V3 bulk capacitor near MCU"},
+    {"ref": "R3", "part": "r-0603", "value": "10k", "purpose": "BOOT0 pull-down, boot from flash"},
+    {"ref": "J2", "part": "header-1x4", "value": "SWD", "purpose": "SWD header: 1 SWDIO, 2 SWCLK, 3 GND, 4 3V3"},
+    {"ref": "SW1", "part": "sw-tact-smd", "value": "RESET", "purpose": "Reset button on NRST"},
+    {"ref": "D2", "part": "led-0603", "value": "green", "purpose": "3V3 power indicator"},
+    {"ref": "R4", "part": "r-0603", "value": "1k", "purpose": "Power LED series resistor"},
+    {"ref": "D3", "part": "led-0603", "value": "blue", "purpose": "User status LED"},
+    {"ref": "R5", "part": "r-0603", "value": "1k", "purpose": "User LED series resistor"},
+    {"ref": "J3", "part": "microsd", "value": "", "purpose": "microSD card slot, SPI mode"},
+    {"ref": "C11", "part": "c-0603", "value": "100nF", "purpose": "microSD VDD decoupling"},
+    {"ref": "U3", "part": "ds3231", "value": "", "purpose": "I2C real-time clock"},
+    {"ref": "C13", "part": "c-0603", "value": "100nF", "purpose": "DS3231 VCC decoupling"},
+    {"ref": "J4", "part": "cr2032", "value": "", "purpose": "RTC backup battery holder"},
+    {"ref": "U4", "part": "ads1115", "value": "", "purpose": "16-bit I2C ADC"},
+    {"ref": "C14", "part": "c-0603", "value": "100nF", "purpose": "ADS1115 VDD decoupling"},
+    {"ref": "J5", "part": "screw-3", "value": "", "purpose": "Analog input: 1 AIN0, 2 AIN1, 3 GND"},
+    {"ref": "R6", "part": "r-0603", "value": "4.7k", "purpose": "I2C SDA pull-up"},
+    {"ref": "R7", "part": "r-0603", "value": "4.7k", "purpose": "I2C SCL pull-up"},
+    {"ref": "R8", "part": "r-0603", "value": "1k", "purpose": "AIN0 series protection resistor"},
+    {"ref": "R9", "part": "r-0603", "value": "1k", "purpose": "AIN1 series protection resistor"},
+    {"ref": "R10", "part": "r-0603", "value": "1.5k", "purpose": "USB D+ pull-up for full-speed enumeration"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["J1.A1B12", "J1.B1A12", "J1.S1", "J1.S2", "J1.S3", "J1.S4", "R1.2", "R2.2", "D1.2", "U1.2", "C1.2", "C2.2", "U2.8", "U2.23", "U2.45", "U2.47", "Y1.2", "Y1.4", "C3.2", "C4.2", "C5.2", "C6.2", "C7.2", "C8.2", "C9.2", "C10.2", "R3.2", "J2.3", "SW1.3", "D2.1", "D3.1", "J3.6", "J3.S1", "J3.S2", "J3.S3", "J3.S4", "C11.2", "U3.13", "C13.2", "J4.2", "U4.1", "U4.3", "U4.6", "U4.7", "C14.2", "J5.3"]},
+    {"name": "VBUS_IN", "cls": "power", "pins": ["J1.A4B9", "J1.B4A9", "F1.1"]},
+    {"name": "5V", "cls": "power", "pins": ["F1.2", "D1.5", "U1.1", "U1.3", "C1.1"]},
+    {"name": "3V3", "cls": "power", "pins": ["U1.5", "C2.1", "U2.1", "U2.9", "U2.24", "U2.36", "U2.48", "C5.1", "C6.1", "C7.1", "C8.1", "C10.1", "J2.4", "R4.1", "J3.4", "C11.1", "U3.2", "C13.1", "U4.8", "C14.1", "R6.1", "R7.1", "R10.1"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J1.A6", "J1.B6", "D1.1", "D1.6", "U2.33", "R10.2"]},
+    {"name": "USB_DM", "cls": "highspeed", "pins": ["J1.A7", "J1.B7", "D1.3", "D1.4", "U2.32"]},
+    {"name": "CC1", "cls": "signal", "pins": ["J1.A5", "R1.1"]},
+    {"name": "CC2", "cls": "signal", "pins": ["J1.B5", "R2.1"]},
+    {"name": "OSC_IN", "cls": "signal", "pins": ["U2.5", "Y1.1", "C3.1"]},
+    {"name": "OSC_OUT", "cls": "signal", "pins": ["U2.6", "Y1.3", "C4.1"]},
+    {"name": "NRST", "cls": "signal", "pins": ["U2.7", "C9.1", "SW1.1"]},
+    {"name": "BOOT0", "cls": "signal", "pins": ["U2.42", "R3.1"]},
+    {"name": "SWDIO", "cls": "signal", "pins": ["U2.34", "J2.1"]},
+    {"name": "SWCLK", "cls": "signal", "pins": ["U2.35", "J2.2"]},
+    {"name": "PWR_LED", "cls": "signal", "pins": ["R4.2", "D2.2"]},
+    {"name": "LED_DRV", "cls": "signal", "pins": ["U2.18", "R5.1"]},
+    {"name": "USER_LED", "cls": "signal", "pins": ["R5.2", "D3.2"]},
+    {"name": "SD_CS", "cls": "signal", "pins": ["U2.14", "J3.2"]},
+    {"name": "SD_SCK", "cls": "signal", "pins": ["U2.15", "J3.5"]},
+    {"name": "SD_MISO", "cls": "signal", "pins": ["U2.16", "J3.7"]},
+    {"name": "SD_MOSI", "cls": "signal", "pins": ["U2.17", "J3.3"]},
+    {"name": "SD_CD", "cls": "signal", "pins": ["U2.19", "J3.9"]},
+    {"name": "SCL", "cls": "signal", "pins": ["U2.40", "R7.2", "U3.16", "U4.10"]},
+    {"name": "SDA", "cls": "signal", "pins": ["U2.41", "R6.2", "U3.15", "U4.9"]},
+    {"name": "RTC_INT", "cls": "signal", "pins": ["U3.3", "U2.10"]},
+    {"name": "ADC_ALERT", "cls": "signal", "pins": ["U4.2", "U2.11"]},
+    {"name": "VBAT_RTC", "cls": "signal", "pins": ["U3.14", "J4.1"]},
+    {"name": "AIN0_IN", "cls": "analog", "pins": ["J5.1", "R8.1"]},
+    {"name": "AIN0", "cls": "analog", "pins": ["R8.2", "U4.4"]},
+    {"name": "AIN1_IN", "cls": "analog", "pins": ["J5.2", "R9.1"]},
+    {"name": "AIN1", "cls": "analog", "pins": ["R9.2", "U4.5"]}
+  ],
+  "notes": [
+    "Screw terminal J5: pin 1 = AIN0, pin 2 = AIN1, pin 3 = GND. Inputs must stay within 0 to 3.3 V (ADS1115 VDD); add an external divider for higher voltages.",
+    "SWD header J2 pinout: 1 SWDIO, 2 SWCLK, 3 GND, 4 3V3.",
+    "USB D+/D- are wired to PA12/PA11 with a fixed 1.5k pull-up so USB CDC firmware can be used; if USB is unused this is harmless.",
+    "microSD CS (PA4) has no external pull-up to save component count - configure PA4 high early in firmware before SD init; CD (PB1) uses the internal pull-up.",
+    "STM32 VBAT is tied to 3V3; timekeeping backup is provided by the DS3231 with the CR2032 on J4.",
+    "AP2112K-3.3 is rated 600 mA; expected load is ~150 mA typical with microSD write bursts.",
+    "Verify ADS1115 address 0x48 (ADDR to GND) and DS3231 at 0x68 do not conflict with any added I2C devices."
+  ],
+  "estimated_cost_usd": 9.8
+}
+```

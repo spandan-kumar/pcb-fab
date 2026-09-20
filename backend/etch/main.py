@@ -30,9 +30,9 @@ EXAMPLES = [
     {"title": "Arduino-style AVR board", "emoji": "🔧",
      "prompt": "A compact Arduino-compatible board: ATmega328P with 16MHz crystal, CH340C USB-C serial, auto-reset, ICSP header, "
                "power and TX/RX LEDs, AMS1117 5V→3.3V (board runs at 5V from USB), and 1x10 + 1x8 pin headers for all IO."},
-    {"title": "STM32 data logger", "emoji": "💾",
-     "prompt": "An STM32F103 data logger with a microSD slot over SPI, a DS3231 RTC with CR2032 backup, an ADS1115 16-bit ADC on a screw terminal "
-               "input, USB-C power, SWD header, and a user LED. 3.3V system."},
+    {"title": "ESP32-S3 data logger", "emoji": "💾",
+     "prompt": "An ESP32-S3 data logger with a microSD slot over SPI, a DS3231 RTC with CR2032 backup, an ADS1115 16-bit ADC on a screw terminal "
+               "input, native USB-C for power and programming, boot/reset buttons, and a user LED. 3.3V system."},
     {"title": "RS-485 industrial node", "emoji": "🏭",
      "prompt": "An industrial RS-485 sensor node: ESP32-WROOM-32E, MAX485 transceiver on a 3-pin screw terminal, 12V input via barrel jack with "
                "MP1584 buck to 5V and AP2112K to 3.3V, a relay output (SRD-05VDC driven by AO3400 MOSFET with flyback diode) on a screw terminal, "

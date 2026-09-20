@@ -1,0 +1,116 @@
+## Reasoning
+
+**Requirements → architecture.** A two-motor robot controller with an ESP32-S3 (native USB, no CH340), DRV8833 dual H-bridge, ultrasonic + two servos, powered from a 7–12 V barrel jack. Single 2-layer board, ~38 parts.
+
+**Power tree.** Barrel jack (7–12 V) → SS34 Schottky in series for reverse-polarity protection (~0.4 V drop at 1 A, fine at 12 V in) → `VIN`. TPS54302 buck (3 A, up to 28 V in) makes `5V`: 10 µF in, 22 µF + 100 µF electrolytic out (servo/motor transients), 4.7 µH inductor, 100 nF bootstrap, EN via 100 k to VIN, feedback 100 k / 13.3 k → 0.596 × (1 + 7.52) ≈ 5.08 V. AMS1117-3.3 (SOT-223, dissipates ≈ 0.9 W at 500 mA — heat-sink into copper) makes `3V3` for the ESP32-S3 (≈ 500 mA Wi-Fi peak). USB VBUS is diode-OR'd into `5V` through a second SS34 so the board programs from USB alone; motors/servos should use the jack.
+
+**Motor driver.** DRV8833 max VM is 10.8 V, so a 12 V jack input cannot feed VM directly. VM is therefore on the 5 V rail (suits 3–6 V TT gearmotors); 10 µF + 10 nF VCP cap on VM, 2.2 µF on VINT, sense pins grounded. AIN1/2, BIN1/2 on IO4–IO7 (all PWM-capable), nSLEEP on IO21 for software enable, nFAULT (open-drain) pulled up 10 k to 3V3 on IO15. Motor outputs to two 2-pin screw terminals.
+
+**MCU & I/O map.** ESP32-S3-WROOM-1: EN 10 k pull-up + 100 nF + reset button; IO0 boot button; 10 µF + 100 nF decoupling. USB-C: D+/D- straight to IO20/IO19, USBLC6 TVS on D+/D-/VBUS, separate 5.1 k on CC1 and CC2. IO16 = TRIG; HC-SR04 ECHO is 5 V so it drops through a 1 k/2 k divider to IO17 (3.33 V). Servo signals on IO18 and IO8; servo VCC from 5 V. Avoid IO35–37 (octal PSRAM). Green power LED on 3V3 via 1 k (~1.5 mA).
+
+**Trade-offs.** No inrush fuse (parts budget) — add one if the robot has large motors. Buck 3 A budget: two servos (~1 A peak each) + two motors + ESP32 is tight under stall; note it. Keep the buck's SW node short, and keep the WROOM antenna at the board edge away from the barrel jack.
+
+```json
+{
+  "name": "RoboDriveS3",
+  "tagline": "ESP32-S3 robot controller with dual H-bridge, servos and ultrasonic",
+  "summary": "A compact robot brain board: an ESP32-S3 Wi-Fi/Bluetooth module drives two DC motors through a DRV8833 H-bridge, two hobby servos and an HC-SR04 distance sensor. It runs from a 7-12 V barrel-jack battery pack via an efficient buck converter, and programs directly over USB-C.",
+  "board": {"width": 72, "height": 52, "mounting_holes": true},
+  "power": {
+    "input": "DC barrel jack 7-12 V (USB-C 5 V for programming)",
+    "rails": [
+      {"net": "VJACK", "voltage": 12.0, "current_ma": 2000},
+      {"net": "VIN", "voltage": 12.0, "current_ma": 2000},
+      {"net": "5V", "voltage": 5.0, "current_ma": 3000},
+      {"net": "3V3", "voltage": 3.3, "current_ma": 500}
+    ]
+  },
+  "components": [
+    {"ref": "J1", "part": "barrel-jack", "value": "", "purpose": "7-12 V DC power input"},
+    {"ref": "D1", "part": "d-sma", "value": "SS34", "purpose": "Reverse-polarity protection on jack input"},
+    {"ref": "U1", "part": "tps54302", "value": "", "purpose": "Buck converter 7-12 V to 5 V, 3 A"},
+    {"ref": "C1", "part": "c-0805", "value": "10uF", "purpose": "Buck input bulk capacitor"},
+    {"ref": "C2", "part": "c-0805", "value": "22uF", "purpose": "Buck output capacitor"},
+    {"ref": "C3", "part": "c-0603", "value": "100nF", "purpose": "Buck bootstrap capacitor BST-SW"},
+    {"ref": "L1", "part": "l-4x4", "value": "4.7uH", "purpose": "Buck power inductor"},
+    {"ref": "R1", "part": "r-0603", "value": "100k", "purpose": "Buck EN pull-up to VIN"},
+    {"ref": "R2", "part": "r-0603", "value": "100k", "purpose": "Buck feedback divider top, sets 5 V"},
+    {"ref": "R3", "part": "r-0603", "value": "13.3k", "purpose": "Buck feedback divider bottom"},
+    {"ref": "U2", "part": "ams1117-3.3", "value": "", "purpose": "LDO 5 V to 3.3 V for ESP32-S3"},
+    {"ref": "C4", "part": "c-elec-6.3", "value": "100uF", "purpose": "5 V bulk for motor/servo transients"},
+    {"ref": "C5", "part": "c-0805", "value": "10uF", "purpose": "3V3 bulk / LDO output cap"},
+    {"ref": "U3", "part": "esp32-s3-wroom-1", "value": "", "purpose": "Main MCU with Wi-Fi, BLE, native USB"},
+    {"ref": "C6", "part": "c-0603", "value": "100nF", "purpose": "ESP32-S3 3V3 decoupling"},
+    {"ref": "C7", "part": "c-0603", "value": "100nF", "purpose": "ESP32-S3 EN reset delay"},
+    {"ref": "R4", "part": "r-0603", "value": "10k", "purpose": "ESP32-S3 EN pull-up"},
+    {"ref": "SW1", "part": "sw-tact-smd", "value": "BOOT", "purpose": "Boot button IO0 to GND"},
+    {"ref": "SW2", "part": "sw-tact-smd", "value": "RESET", "purpose": "Reset button EN to GND"},
+    {"ref": "J2", "part": "usb-c-16p", "value": "", "purpose": "USB-C for programming and 5 V"},
+    {"ref": "R5", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC1 pull-down"},
+    {"ref": "R6", "part": "r-0603", "value": "5.1k", "purpose": "USB-C CC2 pull-down"},
+    {"ref": "D2", "part": "tvs-usblc6", "value": "", "purpose": "ESD protection on USB D+/D-/VBUS"},
+    {"ref": "D3", "part": "d-sma", "value": "SS34", "purpose": "Diode-OR USB VBUS into 5 V rail"},
+    {"ref": "U4", "part": "drv8833", "value": "", "purpose": "Dual H-bridge for two DC motors"},
+    {"ref": "C8", "part": "c-0805", "value": "10uF", "purpose": "DRV8833 VM motor supply bulk"},
+    {"ref": "C9", "part": "c-0603", "value": "10nF", "purpose": "DRV8833 charge pump VCP to VM"},
+    {"ref": "C10", "part": "c-0805", "value": "2.2uF", "purpose": "DRV8833 VINT internal regulator cap"},
+    {"ref": "R7", "part": "r-0603", "value": "10k", "purpose": "DRV8833 nFAULT open-drain pull-up"},
+    {"ref": "J3", "part": "screw-2", "value": "MOTOR_A", "purpose": "Motor A screw terminal"},
+    {"ref": "J4", "part": "screw-2", "value": "MOTOR_B", "purpose": "Motor B screw terminal"},
+    {"ref": "J5", "part": "hcsr04-header", "value": "", "purpose": "HC-SR04 ultrasonic sensor header"},
+    {"ref": "R8", "part": "r-0603", "value": "1k", "purpose": "ECHO 5 V to 3.3 V divider top"},
+    {"ref": "R9", "part": "r-0603", "value": "2k", "purpose": "ECHO 5 V to 3.3 V divider bottom"},
+    {"ref": "J6", "part": "servo-header", "value": "SERVO1", "purpose": "Servo 1 header, 5 V supply"},
+    {"ref": "J7", "part": "servo-header", "value": "SERVO2", "purpose": "Servo 2 header, 5 V supply"},
+    {"ref": "D4", "part": "led-0603", "value": "green", "purpose": "3V3 power indicator LED"},
+    {"ref": "R10", "part": "r-0603", "value": "1k", "purpose": "Power LED series resistor"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["J1.2", "U1.1", "C1.2", "C2.2", "R3.2", "U2.1", "C4.2", "C5.2", "U3.1", "U3.40", "U3.41", "C6.2", "C7.2", "SW1.3", "SW2.3", "J2.A1B12", "J2.B1A12", "J2.S1", "J2.S2", "J2.S3", "J2.S4", "R5.2", "R6.2", "D2.2", "U4.11", "U4.3", "U4.6", "C8.2", "C10.2", "J5.4", "R9.2", "J6.3", "J7.3", "D4.1"]},
+    {"name": "VJACK", "cls": "power", "pins": ["J1.1", "D1.2"]},
+    {"name": "VIN", "cls": "power", "pins": ["D1.1", "U1.3", "C1.1", "R1.1"]},
+    {"name": "BUCK_EN", "cls": "signal", "pins": ["U1.5", "R1.2"]},
+    {"name": "BUCK_SW", "cls": "signal", "pins": ["U1.2", "L1.1", "C3.2"]},
+    {"name": "BUCK_BST", "cls": "signal", "pins": ["U1.6", "C3.1"]},
+    {"name": "BUCK_FB", "cls": "analog", "pins": ["U1.4", "R2.2", "R3.1"]},
+    {"name": "5V", "cls": "power", "pins": ["L1.2", "C2.1", "R2.1", "U2.3", "C4.1", "D3.1", "U4.13", "C8.1", "C9.2", "J5.1", "J6.2", "J7.2"]},
+    {"name": "3V3", "cls": "power", "pins": ["U2.2", "U2.4", "C5.1", "U3.2", "C6.1", "R4.1", "R7.1", "R10.2"]},
+    {"name": "VBUS", "cls": "power", "pins": ["J2.A4B9", "J2.B4A9", "D2.5", "D3.2"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J2.A6", "J2.B6", "D2.1", "D2.6", "U3.14"]},
+    {"name": "USB_DN", "cls": "highspeed", "pins": ["J2.A7", "J2.B7", "D2.3", "D2.4", "U3.13"]},
+    {"name": "CC1", "cls": "signal", "pins": ["J2.A5", "R5.1"]},
+    {"name": "CC2", "cls": "signal", "pins": ["J2.B5", "R6.1"]},
+    {"name": "EN", "cls": "signal", "pins": ["U3.3", "R4.2", "C7.1", "SW2.1"]},
+    {"name": "IO0_BOOT", "cls": "signal", "pins": ["U3.27", "SW1.1"]},
+    {"name": "AIN1", "cls": "signal", "pins": ["U3.4", "U4.16"]},
+    {"name": "AIN2", "cls": "signal", "pins": ["U3.5", "U4.15"]},
+    {"name": "BIN1", "cls": "signal", "pins": ["U3.6", "U4.9"]},
+    {"name": "BIN2", "cls": "signal", "pins": ["U3.7", "U4.10"]},
+    {"name": "MOTOR_nFAULT", "cls": "signal", "pins": ["U3.8", "U4.8", "R7.2"]},
+    {"name": "MOTOR_nSLEEP", "cls": "signal", "pins": ["U3.23", "U4.1"]},
+    {"name": "VCP", "cls": "signal", "pins": ["U4.12", "C9.1"]},
+    {"name": "VINT", "cls": "signal", "pins": ["U4.14", "C10.1"]},
+    {"name": "AOUT1", "cls": "signal", "pins": ["U4.2", "J3.1"]},
+    {"name": "AOUT2", "cls": "signal", "pins": ["U4.4", "J3.2"]},
+    {"name": "BOUT1", "cls": "signal", "pins": ["U4.7", "J4.1"]},
+    {"name": "BOUT2", "cls": "signal", "pins": ["U4.5", "J4.2"]},
+    {"name": "US_TRIG", "cls": "signal", "pins": ["U3.9", "J5.2"]},
+    {"name": "US_ECHO_5V", "cls": "signal", "pins": ["J5.3", "R8.1"]},
+    {"name": "US_ECHO_3V3", "cls": "signal", "pins": ["R8.2", "R9.1", "U3.10"]},
+    {"name": "SERVO1", "cls": "signal", "pins": ["U3.11", "J6.1"]},
+    {"name": "SERVO2", "cls": "signal", "pins": ["U3.12", "J7.1"]},
+    {"name": "PWR_LED", "cls": "signal", "pins": ["R10.1", "D4.2"]}
+  ],
+  "notes": [
+    "DRV8833 VM is limited to 10.8 V, so motor supply is taken from the 5 V buck rail rather than the 7-12 V jack; suits 3-6 V gearmotors. For higher-voltage motors swap to a driver rated for VM > 12 V.",
+    "TPS54302 output set by R2/R3 = 100k/13.3k -> ~5.08 V; keep SW node (U1.2, L1, C3) short and wide; place C1 directly at U1.3.",
+    "5 V rail budget (3 A) is shared by two servos, two motors and the ESP32 via LDO; avoid simultaneous servo + motor stall or add a fuse/PTC on VIN.",
+    "AMS1117 dissipates ~0.9 W at 500 mA Wi-Fi peaks; give the SOT-223 tab a generous GND copper pour.",
+    "USB VBUS diode-OR'd into 5 V through D3 so the board can be programmed from USB alone; do not expect motors/servos to run on USB power.",
+    "HC-SR04 ECHO is a 5 V output; R8/R9 (1k/2k) divide it to 3.3 V for IO17. TRIG at 3.3 V is accepted by most HC-SR04 modules.",
+    "ESP32-S3 IO35-37 intentionally unused (octal PSRAM variants). IO19/IO20 native USB wired directly, no series resistors.",
+    "Keep the WROOM antenna edge clear of the barrel jack, screw terminals and copper pour."
+  ],
+  "estimated_cost_usd": 10.8
+}
+```

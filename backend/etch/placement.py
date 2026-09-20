@@ -57,7 +57,7 @@ def size_board(board: Board, proposed_w: float, proposed_h: float) -> tuple[floa
         area += cw * ch
         max_w = max(max_w, cw)
         max_h = max(max_h, ch)
-    need = area * 2.6 + 150
+    need = area * 3.1 + 180
     w, h = proposed_w, proposed_h
     if w * h < need:
         k = math.sqrt(need / (w * h))
@@ -118,8 +118,11 @@ class Placer:
             ys.append(c.y + y)
         return (max(xs) - min(xs) + max(ys) - min(ys)) * self.net_w[i]
 
+    GAP = 0.9  # desired free space between courtyards (mm) — routing room
+
     def _overlap_cost(self, c: Component) -> float:
         ax, ay, aw, ah = c.courtyard_abs()
+        g = self.GAP / 2
         cost = 0.0
         for o in self.b.components:
             if o is c:
@@ -129,6 +132,11 @@ class Placer:
             iy = min(ay + ah, by + bh) - max(ay, by)
             if ix > 0 and iy > 0:
                 cost += 40.0 * ix * iy + 25.0
+            # soft repulsion: inflated courtyards
+            jx = min(ax + aw + g, bx + bw + g) - max(ax - g, bx - g)
+            jy = min(ay + ah + g, by + bh + g) - max(ay - g, by - g)
+            if jx > 0 and jy > 0:
+                cost += 6.0 * jx * jy + 3.0
         # out of bounds
         m = 0.6
         ox = max(0.0, m - ax) + max(0.0, ax + aw - (self.b.width - m))
@@ -224,7 +232,7 @@ class Placer:
         n = len(self.comps)
         if n == 0:
             return
-        total = iterations or min(45000, 2500 + 650 * n)
+        total = iterations or min(30000, 1500 + 420 * n)
         # calibrate T0
         deltas = []
         for _ in range(60):

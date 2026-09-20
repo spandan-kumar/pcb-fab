@@ -27,7 +27,8 @@ def backend_name() -> str:
 
 
 def _cache_key(system: str, prompt: str) -> str:
-    return hashlib.sha256((system + "\n---\n" + prompt).encode()).hexdigest()[:24]
+    # keyed on the user prompt only, so system-prompt tweaks don't invalidate the demo cache
+    return hashlib.sha256((os.environ.get("ETCH_PROMPT_VERSION", "1") + "\n---\n" + prompt).encode()).hexdigest()[:24]
 
 
 def cache_path(system: str, prompt: str) -> str:

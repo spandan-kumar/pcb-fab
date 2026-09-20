@@ -18,7 +18,8 @@ async def main():
                 print(f"  DRC passed={ev['passed']} errors={ev['errors']} warnings={ev['warnings']}", flush=True)
             if ev["type"] == "artifacts":
                 print(f"  KiCad: {json.dumps(ev['kicad'])[:300]}", flush=True)
-        run = await pipeline.design(ex["prompt"], {"color": "black"}, send)
+        run = await pipeline.design(ex["prompt"], {"color": "black", "demo": True}, send)
         print(f"  run {run.id} done in {time.time()-t0:.0f}s", flush=True)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

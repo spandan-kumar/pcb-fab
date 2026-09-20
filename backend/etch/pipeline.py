@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import time
@@ -90,7 +91,11 @@ async def design(prompt: str, options: dict, send: Callable[[dict], Awaitable[No
             n_thought += 1
             await run.emit({"type": "thought", "text": t})
 
-        board, design_json, raw = await agent.run_agent(prompt, color, on_thought, prefer_cache=demo)
+        cached = llm.has_cached(agent.SYSTEM, agent.user_prompt(prompt))
+        use_cache = (demo or cached) and not options.get("force_live")
+        if use_cache and cached:
+            await run.emit({"type": "thought", "text": "_(replaying a stored agent answer for this prompt — pass `force_live` to re-run the model)_\n\n"})
+        board, design_json, raw = await agent.run_agent(prompt, color, on_thought, prefer_cache=use_cache)
         with open(os.path.join(run.dir, "agent_output.md"), "w") as f:
             f.write(raw)
         await run.emit({"type": "design", "design": design_json})
@@ -108,61 +113,48 @@ async def design(prompt: str, options: dict, send: Callable[[dict], Awaitable[No
         await run.emit({"type": "netlist", "nets": [n.to_json() for n in board.nets]})
         await run.status("netlist", "done", f"{len(board.nets)} nets, {sum(len(n.pins) for n in board.nets)} pins")
 
-        # ---------------- schematic (laid out client-side) — meanwhile: silent placement/routing trials to pick the best seed
+        # ---------------- schematic (laid out client-side) — meanwhile: parallel placement/routing trials pick the best seed
         await run.status("schematic", "start", "Laying out schematic · evaluating placements")
-        await run.emit({"type": "thought", "text": "\n\n**Placement search.** Trying candidate placements and test-routing each one…\n"})
-
-        def trial(seed: int):
-            for c in board.components:
-                if not c.fixed:
-                    c.x = c.y = 0.0
-            board.traces.clear()
-            board.vias.clear()
-            Placer(board, seed=seed).run(frames=1)
-            r = Router(board, time_budget=40)
-            res = r.route_all()
-            return res
-
-        best = None
-        for seed in (7, 3, 11, 19, 23):
-            res = await run.run_blocking(trial, seed)
-            score = (len(res["failed"]), res["orphan_gnd"], res["ripups"], res["length_mm"])
-            await run.emit({"type": "thought", "text": f"- seed {seed}: {len(res['failed'])} unrouted, {res['orphan_gnd']} plane islands, "
-                                                       f"{res['ripups']} rip-ups, {res['length_mm']} mm copper, {res['vias']} vias\n"})
-            if best is None or score < best[0]:
-                best = (score, seed)
-            if score[0] == 0 and score[1] == 0:
-                break
-        best_seed = best[1]
-        await run.emit({"type": "thought", "text": f"→ using seed {best_seed}.\n"})
+        await run.emit({"type": "thought", "text": "\n\n**Placement search.** Annealing candidate placements in parallel and test-routing each one…\n"})
+        seeds = [7, 3, 11, 19, 23, 42]
+        pool = concurrent.futures.ProcessPoolExecutor(max_workers=min(len(seeds), max(2, (os.cpu_count() or 4) - 1)))
+        futs = {pool.submit(_trial, board, seed): seed for seed in seeds}
+        results = {}
+        try:
+            for fut in concurrent.futures.as_completed(futs, timeout=120):
+                seed = futs[fut]
+                try:
+                    res = fut.result()
+                except Exception as e:  # noqa
+                    await run.emit({"type": "thought", "text": f"- seed {seed}: trial crashed ({type(e).__name__})\n"})
+                    continue
+                results[seed] = res
+                await run.emit({"type": "thought", "text": f"- seed {seed}: {res['failed']} unrouted, {res['orphans']} plane islands, "
+                                                           f"{res['ripups']} rip-ups, {res['length_mm']} mm copper, {res['vias']} vias\n"})
+        except concurrent.futures.TimeoutError:
+            pass
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        if not results:
+            raise RuntimeError("all placement trials failed")
+        best_seed = min(results, key=lambda sd: (results[sd]["failed"], results[sd]["orphans"], results[sd]["ripups"], results[sd]["length_mm"]))
+        best = results[best_seed]
+        await run.emit({"type": "thought", "text": f"→ using seed {best_seed} ({best['failed']} unrouted, {best['length_mm']} mm).\n"})
         board.traces.clear()
         board.vias.clear()
-        for c in board.components:
-            if not c.fixed:
-                c.x = c.y = 0.0
         await run.status("schematic", "done")
 
-        # ---------------- placement
+        # ---------------- placement (replay the recorded annealing frames of the winning trial)
         await run.status("placement", "start", f"Placing {len(board.components)} parts on {board.width}×{board.height} mm")
         await run.emit({"type": "board", "board": board.to_json()})
         await asyncio.sleep(0.8)
-
-        def do_place():
-            placer = Placer(board, seed=best_seed)
-            last = {"t": 0.0}
-
-            def on_frame(it, total, T, cost):
-                now = time.time()
-                if now - last["t"] < 0.03 and it != total:
-                    return
-                last["t"] = now
-                run.emit_threadsafe({"type": "placement", "iteration": it, "total": total, "temperature": round(T, 3), "cost": round(cost, 1),
-                                     "positions": {c.ref: [round(c.x, 3), round(c.y, 3), c.rot] for c in board.components}})
-
-            placer.run(on_frame=on_frame, frames=70)
-            return placer
-
-        await run.run_blocking(do_place)
+        frames = best["frames"]
+        for k, fr in enumerate(frames):
+            await run.emit({"type": "placement", "iteration": fr["it"], "total": fr["total"], "temperature": fr["T"], "cost": fr["cost"], "positions": fr["pos"]})
+            await asyncio.sleep(0.045)
+        for c in board.components:
+            if c.ref in best["positions"]:
+                c.x, c.y, c.rot = best["positions"][c.ref]
         await run.emit({"type": "placement_final", "positions": {c.ref: [round(c.x, 3), round(c.y, 3), c.rot] for c in board.components}})
         await run.emit({"type": "ratsnest", "lines": ratsnest(board)})
         await run.status("placement", "done")
@@ -229,6 +221,27 @@ async def design(prompt: str, options: dict, send: Callable[[dict], Awaitable[No
     finally:
         run.save()
     return run
+
+
+def _trial(board: Board, seed: int) -> dict:
+    """Worker: anneal with `seed`, record frames, test-route. Runs in a separate process."""
+    for c in board.components:
+        if not c.fixed:
+            c.x = c.y = 0.0
+    board.traces.clear()
+    board.vias.clear()
+    frames = []
+
+    def on_frame(it, total, T, cost):
+        frames.append({"it": it, "total": total, "T": round(T, 3), "cost": round(cost, 1),
+                       "pos": {c.ref: [round(c.x, 3), round(c.y, 3), c.rot] for c in board.components}})
+
+    Placer(board, seed=seed).run(on_frame=on_frame, frames=64)
+    r = Router(board, time_budget=45)
+    res = r.route_all()
+    return {"seed": seed, "failed": len(res["failed"]), "orphans": res["orphan_gnd"], "ripups": res["ripups"],
+            "length_mm": res["length_mm"], "vias": res["vias"], "frames": frames,
+            "positions": {c.ref: (c.x, c.y, c.rot) for c in board.components}}
 
 
 def _keepouts(board: Board):

@@ -39,7 +39,10 @@ full netlist. Your output is consumed by an automated placer/router/DRC/Gerber p
 - Every net has ≥ 2 pins. Ground net is named exactly `GND` with `cls: "gnd"`. Power rails use `cls: "power"` and appear in `power.rails`.
   Other nets: `signal`, `analog`, or `highspeed` (USB D+/D-).
 - A pin may appear in only one net. Do not connect pins marked NC. Do not list unconnected pins.
-- Component count: 12–38 total (routability on a 2-layer board). Prefer one MCU/module. Passives: 0603 by default, 0805 for ≥ 10 uF.
+- Component count: 12–34 total (routability on a 2-layer board). Prefer one MCU/module. Passives: 0603 by default, 0805 for ≥ 10 uF.
+- Routability: the downstream 2-layer autorouter handles modules (ESP32-WROOM/S3/C3) and ≥ 0.65 mm pitch packages well; bare
+  fine-pitch MCUs (LQFP-48 0.5 mm, QFN) route less reliably — use them only when the user explicitly asks for that chip, and then keep
+  the rest of the board minimal. Prefer ESP32 modules for generic "MCU" requests. Avoid more than ~14 header pins in total.
 - Always include: decoupling (100 nF per IC power pin, 10 uF bulk per rail), regulator in/out caps, pull-ups on I2C (4.7k),
   series resistors for LEDs (1k at 3.3 V), a power LED, and a programming path (USB-C + CH340C UART for ESP32-WROOM; native USB for
   ESP32-S3/C3; ICSP header for AVR; SWD header for STM32). ESP32: EN 10k pull-up + 100 nF, BOOT (IO0) button, RESET (EN) button.

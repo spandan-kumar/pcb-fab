@@ -1,0 +1,100 @@
+## Reasoning
+
+**Requirements:** USB-C powered Wi-Fi sensor node: SHT31 (T/RH), BME280 (pressure), WS2812B status LED, boot/reset buttons, Qwiic expansion, firmware upload over USB. Indoor, mains-adjacent, no battery.
+
+**Architecture:** ESP32-WROOM-32E is the natural fit — plenty of GPIO, one I2C bus shared by SHT31 (0x44), BME280 (0x76) and the Qwiic port, and Wi-Fi built in. Since WROOM has no native USB, a CH340C USB-UART bridge handles programming on UART0 (IO1/IO3).
+
+**Power tree:** USB-C VBUS → 1 A fuse → 5V rail (~800 mA budget: ESP32 peaks ~500 mA reflected through the LDO, WS2812B up to 60 mA, CH340C ~15 mA). AMS1117-3.3 LDO gives 3V3 at up to 800 mA; dissipation at 500 mA peak is (5−3.3)×0.5 ≈ 0.85 W transient, acceptable on SOT-223 with a copper pour. 10 µF on LDO in/out, 10 µF + 100 nF at the module, 100 nF per sensor supply pin. USB-C sink: two 5.1 k CC pull-downs, USBLC6-2SC6 TVS on D+/D−/VBUS, shield to GND.
+
+**MCU & I/O map:**
+- IO21 = SDA, IO22 = SCL, 4.7 k pull-ups to 3V3 (bus is short; ~100 kHz default).
+- IO4 → WS2812B DIN (5 V LED driven with 3.3 V logic — works in practice at short trace lengths; note included).
+- IO0 → BOOT button, EN → RESET button, 10 k pull-up + 100 nF on EN.
+- IO1/IO3 ↔ CH340C RXD/TXD. CH340C RTS → EN via 100 nF for auto-reset; DTR left unconnected (hold BOOT when flashing if auto-boot isn't picked up).
+- Avoided IO12 (boot strap), IO6–11 (flash), input-only pins unused.
+
+**Peripherals:** SHT31: ADDR, R → GND; nRESET → 3V3. BME280 in I2C mode: CSB → VDDIO, SDO → GND. Both sensors placed away from the LDO/ESP32 heat (placement note). Qwiic connector carries GND/3V3/SDA/SCL.
+
+**Indication:** Green power LED on 3V3 via 1 k (~1.5 mA). WS2812B with its own 100 nF.
+
+**Trade-offs:** AMS1117 chosen over AP2112K for current headroom during Wi-Fi bursts; CH340C rather than an ESP32-S3 keeps the BOM familiar and cheap. 31 parts, 2-layer, ~56×40 mm.
+
+```json
+{
+  "name": "EnvNode32",
+  "tagline": "USB-C ESP32 Wi-Fi node for temperature, humidity and pressure",
+  "summary": "A compact USB-C powered board with an ESP32 Wi-Fi module that reads an SHT31 temperature/humidity sensor and a BME280 pressure sensor and pushes the readings over Wi-Fi. It has an RGB status LED, boot/reset buttons, a USB programming interface and a Qwiic port for plugging in extra sensors.",
+  "board": {"width": 56, "height": 40, "mounting_holes": true},
+  "power": {
+    "input": "USB-C 5 V",
+    "rails": [
+      {"net": "5V", "voltage": 5.0, "current_ma": 800},
+      {"net": "3V3", "voltage": 3.3, "current_ma": 500}
+    ]
+  },
+  "components": [
+    {"ref": "J1", "part": "usb-c-16p", "value": "", "purpose": "USB-C power input and programming"},
+    {"ref": "R1", "part": "r-0603", "value": "5.1k", "purpose": "CC1 pull-down, USB sink identification"},
+    {"ref": "R2", "part": "r-0603", "value": "5.1k", "purpose": "CC2 pull-down, USB sink identification"},
+    {"ref": "D1", "part": "tvs-usblc6", "value": "USBLC6-2SC6", "purpose": "ESD protection on USB D+/D-/VBUS"},
+    {"ref": "F1", "part": "fuse-1206", "value": "1A", "purpose": "Overcurrent protection on VBUS"},
+    {"ref": "U2", "part": "ams1117-3.3", "value": "3.3V", "purpose": "5V to 3.3V LDO regulator"},
+    {"ref": "C1", "part": "c-0805", "value": "10uF", "purpose": "LDO input bulk capacitor"},
+    {"ref": "C2", "part": "c-0805", "value": "10uF", "purpose": "LDO output bulk capacitor"},
+    {"ref": "U1", "part": "esp32-wroom-32e", "value": "", "purpose": "Wi-Fi MCU, reads sensors and publishes data"},
+    {"ref": "C3", "part": "c-0805", "value": "10uF", "purpose": "ESP32 3V3 bulk decoupling"},
+    {"ref": "C4", "part": "c-0603", "value": "100nF", "purpose": "ESP32 3V3 HF decoupling"},
+    {"ref": "R3", "part": "r-0603", "value": "10k", "purpose": "EN pull-up"},
+    {"ref": "C5", "part": "c-0603", "value": "100nF", "purpose": "EN reset delay capacitor"},
+    {"ref": "SW1", "part": "sw-tact-smd", "value": "BOOT", "purpose": "Boot button, pulls IO0 low"},
+    {"ref": "SW2", "part": "sw-tact-smd", "value": "RESET", "purpose": "Reset button, pulls EN low"},
+    {"ref": "U3", "part": "ch340c", "value": "", "purpose": "USB to UART bridge for programming"},
+    {"ref": "C6", "part": "c-0603", "value": "100nF", "purpose": "CH340C V3 internal regulator cap"},
+    {"ref": "C7", "part": "c-0603", "value": "100nF", "purpose": "CH340C VCC decoupling"},
+    {"ref": "C8", "part": "c-0603", "value": "100nF", "purpose": "RTS to EN auto-reset coupling"},
+    {"ref": "U4", "part": "sht31", "value": "", "purpose": "Temperature and humidity sensor, I2C 0x44"},
+    {"ref": "C9", "part": "c-0603", "value": "100nF", "purpose": "SHT31 VDD decoupling"},
+    {"ref": "U5", "part": "bme280", "value": "", "purpose": "Barometric pressure sensor, I2C 0x76"},
+    {"ref": "C10", "part": "c-0603", "value": "100nF", "purpose": "BME280 VDD decoupling"},
+    {"ref": "C11", "part": "c-0603", "value": "100nF", "purpose": "BME280 VDDIO decoupling"},
+    {"ref": "R6", "part": "r-0603", "value": "4.7k", "purpose": "I2C SDA pull-up"},
+    {"ref": "R7", "part": "r-0603", "value": "4.7k", "purpose": "I2C SCL pull-up"},
+    {"ref": "J2", "part": "qwiic", "value": "", "purpose": "Qwiic I2C expansion connector"},
+    {"ref": "D2", "part": "ws2812b", "value": "RGB", "purpose": "RGB status LED"},
+    {"ref": "C12", "part": "c-0603", "value": "100nF", "purpose": "WS2812B supply decoupling"},
+    {"ref": "D3", "part": "led-0603", "value": "green", "purpose": "3V3 power indicator"},
+    {"ref": "R8", "part": "r-0603", "value": "1k", "purpose": "Power LED current limit"}
+  ],
+  "nets": [
+    {"name": "GND", "cls": "gnd", "pins": ["J1.A1B12", "J1.B1A12", "J1.S1", "J1.S2", "J1.S3", "J1.S4", "R1.2", "R2.2", "D1.2", "U2.1", "C1.2", "C2.2", "U1.1", "U1.15", "U1.38", "U1.39", "C3.2", "C4.2", "C5.2", "SW1.3", "SW2.3", "U3.1", "C6.2", "C7.2", "U4.8", "U4.2", "U4.7", "C9.2", "U5.1", "U5.7", "U5.5", "C10.2", "C11.2", "J2.1", "J2.S1", "J2.S2", "D2.3", "C12.2", "D3.1"]},
+    {"name": "VBUS", "cls": "power", "pins": ["J1.A4B9", "J1.B4A9", "D1.5", "F1.1"]},
+    {"name": "5V", "cls": "power", "pins": ["F1.2", "U2.3", "C1.1", "U3.16", "C7.1", "D2.1", "C12.1"]},
+    {"name": "3V3", "cls": "power", "pins": ["U2.2", "U2.4", "C2.1", "U1.2", "C3.1", "C4.1", "R3.1", "U4.5", "U4.6", "C9.1", "U5.8", "U5.6", "U5.2", "C10.1", "C11.1", "R6.1", "R7.1", "J2.2", "R8.1"]},
+    {"name": "USB_DP", "cls": "highspeed", "pins": ["J1.A6", "J1.B6", "D1.1", "D1.6", "U3.5"]},
+    {"name": "USB_DM", "cls": "highspeed", "pins": ["J1.A7", "J1.B7", "D1.3", "D1.4", "U3.6"]},
+    {"name": "CC1", "cls": "signal", "pins": ["J1.A5", "R1.1"]},
+    {"name": "CC2", "cls": "signal", "pins": ["J1.B5", "R2.1"]},
+    {"name": "EN", "cls": "signal", "pins": ["U1.3", "R3.2", "C5.1", "SW2.1", "C8.1"]},
+    {"name": "RTS", "cls": "signal", "pins": ["U3.14", "C8.2"]},
+    {"name": "IO0", "cls": "signal", "pins": ["U1.25", "SW1.1"]},
+    {"name": "ESP_RX", "cls": "signal", "pins": ["U1.34", "U3.2"]},
+    {"name": "ESP_TX", "cls": "signal", "pins": ["U1.35", "U3.3"]},
+    {"name": "SDA", "cls": "signal", "pins": ["U1.33", "U4.1", "U5.3", "R6.2", "J2.3"]},
+    {"name": "SCL", "cls": "signal", "pins": ["U1.36", "U4.4", "U5.4", "R7.2", "J2.4"]},
+    {"name": "LED_DATA", "cls": "signal", "pins": ["U1.26", "D2.4"]},
+    {"name": "PWR_LED", "cls": "signal", "pins": ["R8.2", "D3.2"]}
+  ],
+  "notes": [
+    "VBUS net is pre-fuse (connector + TVS); 5V net is post-fuse and feeds LDO, CH340C and WS2812B.",
+    "Power rails 'VBUS' and '5V' are the same voltage; VBUS is listed as power class but only 5V/3V3 are budgeted rails.",
+    "WS2812B is driven with 3.3 V logic on a 5 V LED; works with a short trace. If unreliable, add a level shifter or feed the LED from ~4.3 V via a Schottky.",
+    "Auto-reset: CH340C RTS couples to EN via C8. DTR is not wired to IO0; hold BOOT while resetting if esptool does not enter download mode automatically.",
+    "SHT31: ADDR and R to GND (address 0x44), nRESET to 3V3, ALERT unused. BME280 in I2C mode: CSB to VDDIO, SDO to GND (address 0x76).",
+    "Place U4/U5 at the board edge away from U2 (LDO) and U1 to reduce self-heating error; consider a slot or copper-free zone around the SHT31.",
+    "AMS1117 dissipates ~0.85 W during Wi-Fi peaks; give the SOT-223 tab a generous copper pour.",
+    "I2C bus at 100 kHz default with 4.7k pull-ups; bus has three devices (SHT31, BME280, Qwiic) — total capacitance stays well under 400 pF for short Qwiic cables.",
+    "Keep ESP32 antenna at the board edge with no copper underneath (pipeline enforces)."
+  ],
+  "estimated_cost_usd": 7.8
+}
+```

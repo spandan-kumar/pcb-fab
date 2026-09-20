@@ -143,7 +143,7 @@ def soic(n, wide=False) -> Footprint:
 def tssop(n) -> Footprint:
     body_h = {8: 3.0, 10: 3.0, 14: 5.0, 16: 5.0, 20: 6.5, 24: 7.8, 28: 9.7}[n]
     pitch = 0.5 if n == 10 else 0.65
-    return dual_row(f"TSSOP-{n}", n, pitch, 2.875, 1.35, 0.4 if pitch == 0.5 else 0.45, 4.4, body_h, 1.2)
+    return dual_row(f"TSSOP-{n}", n, pitch, 2.875, 1.35, 0.3 if pitch == 0.5 else 0.45, 4.4, body_h, 1.2)
 
 
 def ssop(n) -> Footprint:
