@@ -1,0 +1,74 @@
+[
+ {
+  "run_id": "2ae4a28677",
+  "name": "ENVNODE32",
+  "tagline": "USB-C ESP32 Wi-Fi node with SHT31 + BME280 and Qwiic expansion",
+  "prompt": "A USB-C powered ESP32 environmental sensor node with an SHT31 temperature/humidity sensor, a BME280 pressure sensor, a status RGB LED (WS2812B), boot/reset buttons, and a Qwiic connector for expansion. Push data over Wi-Fi.",
+  "stats": {
+   "components": 29,
+   "nets": 17,
+   "traces": 117,
+   "vias": 66,
+   "total_trace_mm": 605.0,
+   "routed_pct": 100.0,
+   "drc_errors": 0,
+   "ripups": 0,
+   "elapsed_s": 65.3,
+   "kicad_drc_passed": true
+  }
+ },
+ {
+  "run_id": "7429491495",
+  "name": "C3BEACON",
+  "tagline": "LiPo-powered ESP32-C3 motion-wake BLE beacon",
+  "prompt": "A battery powered ESP32-C3 beacon: LiPo battery on JST-PH with TP4056 USB-C charging, a 3.3V LDO, a tactile button, one status LED, and an I2C accelerometer (MPU-6050) to wake on motion. Small board.",
+  "stats": {
+   "components": 34,
+   "nets": 22,
+   "traces": 113,
+   "vias": 59,
+   "total_trace_mm": 493.3,
+   "routed_pct": 100.0,
+   "drc_errors": 0,
+   "ripups": 11,
+   "elapsed_s": 105.8,
+   "kicad_drc_passed": true
+  }
+ },
+ {
+  "run_id": "248e580832",
+  "name": "S3LOGGER",
+  "tagline": "ESP32-S3 data logger with microSD, RTC backup and 16-bit ADC input",
+  "prompt": "An ESP32-S3 data logger with a microSD slot over SPI, a DS3231 RTC with CR2032 backup, an ADS1115 16-bit ADC on a screw terminal input, native USB-C for power and programming, boot/reset buttons, and a user LED. 3.3V system.",
+  "stats": {
+   "components": 31,
+   "nets": 22,
+   "traces": 122,
+   "vias": 67,
+   "total_trace_mm": 626.0,
+   "routed_pct": 100.0,
+   "drc_errors": 0,
+   "ripups": 2,
+   "elapsed_s": 69.9,
+   "kicad_drc_passed": true
+  }
+ },
+ {
+  "run_id": "3be8828b47",
+  "name": "RS485NODE",
+  "tagline": "ESP32 RS-485 sensor node with relay output and DS18B20 probe, 12 V powered",
+  "prompt": "An industrial RS-485 sensor node: ESP32-WROOM-32E, MAX485 transceiver on a 3-pin screw terminal, 12V input via barrel jack with MP1584 buck to 5V and AP2112K to 3.3V, a relay output (SRD-05VDC driven by AO3400 MOSFET with flyback diode) on a screw terminal, DS18B20 temperature probe header, and status LEDs.",
+  "stats": {
+   "components": 38,
+   "nets": 31,
+   "traces": 113,
+   "vias": 50,
+   "total_trace_mm": 684.7,
+   "routed_pct": 100.0,
+   "drc_errors": 0,
+   "ripups": 0,
+   "elapsed_s": 62.9,
+   "kicad_drc_passed": true
+  }
+ }
+]

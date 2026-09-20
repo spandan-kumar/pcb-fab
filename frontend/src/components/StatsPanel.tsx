@@ -1,3 +1,4 @@
+import { api } from '../config'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
 import { fmt, fmtBytes, fmtInt } from '../util/format'
@@ -136,11 +137,11 @@ export function StatsPanel() {
         {artifacts && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-title" style={{ borderTop: '1px solid var(--line)' }}>manufacturing package</div>
-            <a className="download" href={artifacts.zip_url} download>⬇ DOWNLOAD PACKAGE (.zip)</a>
-            {artifacts.gerber_zip_url && <a className="download small" href={artifacts.gerber_zip_url} download>⬇ GERBERS ONLY · JLCPCB-READY</a>}
+            <a className="download" href={api(artifacts.zip_url)} download>⬇ DOWNLOAD PACKAGE (.zip)</a>
+            {artifacts.gerber_zip_url && <a className="download small" href={api(artifacts.gerber_zip_url)} download>⬇ GERBERS ONLY · JLCPCB-READY</a>}
             {artifacts.render_url && (
-              <a className="render-thumb" href={artifacts.render_url} target="_blank" rel="noreferrer">
-                <img src={artifacts.render_url} alt="KiCad render" />
+              <a className="render-thumb" href={api(artifacts.render_url)} target="_blank" rel="noreferrer">
+                <img src={api(artifacts.render_url)} alt="KiCad render" />
                 <div className="cap">RENDERED BY KICAD 10 · click to open</div>
               </a>
             )}

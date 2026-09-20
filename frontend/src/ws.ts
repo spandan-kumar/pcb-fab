@@ -1,3 +1,4 @@
+import { WS_BASE, api } from './config'
 import { useStore } from './store'
 import type { Event, MaskColor } from './protocol'
 import { generateMockRun } from './mock/mockRun'
@@ -22,8 +23,7 @@ export function startLive(prompt: string, color: MaskColor, demo = false) {
   st.setColor(color)
   st.setConnection('connecting')
   live.runStart = performance.now()
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${location.host}/ws/design`)
+  const ws = new WebSocket(`${WS_BASE}/ws/design`)
   socket = ws
   ws.onopen = () => {
     useStore.getState().setConnection('open')
@@ -90,7 +90,8 @@ export function playEvents(events: Event[], mode: 'replay' | 'mock') {
 export async function startReplay(runId: string) {
   const s = useStore.getState()
   try {
-    const r = await fetch(`/api/runs/${runId}/events.json`)
+    let r = await fetch(api(`/api/runs/${runId}/events.json`)).catch(() => null)
+    if (!r || !r.ok) r = await fetch(`/demo/${runId}/events.json`)
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     const events = (await r.json()) as Event[]
     playEvents(events, 'replay')

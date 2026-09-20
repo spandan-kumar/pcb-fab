@@ -1,11 +1,13 @@
+import { api } from '../config'
 import { Suspense, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useStore } from '../store'
-import { startLive, startMock } from '../ws'
+import { startLive, startMock, startReplay } from '../ws'
 import { MASK_COLORS, type MaskColor } from '../protocol'
 import { BoardScene } from '../three/BoardScene'
 
 interface Example { title: string; prompt: string; cached?: boolean }
+interface DemoRun { run_id: string; name: string; tagline: string; prompt: string; stats: { components: number; total_trace_mm: number; vias: number; drc_errors: number; kicad_drc_passed?: boolean } }
 const FALLBACK: Example[] = [
   { title: 'ESP32 sensor node', prompt: 'A USB-C powered ESP32 environmental sensor node with a temperature/humidity sensor, an RGB status LED, and a reset button. Fits in a small enclosure.' },
   { title: 'Li-ion charger + boost', prompt: 'A single-cell Li-ion battery charger board with USB-C input, a TP4056 charger, battery protection, and a 5 V boost output on a screw terminal.' },
@@ -18,10 +20,12 @@ export function Landing() {
   const color = useStore(s => s.color); const setColor = useStore(s => s.setColor)
   const [examples, setExamples] = useState<Example[]>(FALLBACK)
   const [health, setHealth] = useState<{ ok: boolean; llm?: string; kicad?: boolean; ngspice?: boolean } | null>(null)
+  const [demos, setDemos] = useState<DemoRun[]>([])
 
   useEffect(() => {
-    fetch('/api/examples').then(r => r.ok ? r.json() : Promise.reject()).then((ex: Example[]) => Array.isArray(ex) && ex.length && setExamples(ex)).catch(() => {})
-    fetch('/api/health').then(r => r.ok ? r.json() : Promise.reject()).then(h => setHealth({ ok: true, ...h })).catch(() => setHealth({ ok: false }))
+    fetch(api('/api/examples')).then(r => r.ok ? r.json() : Promise.reject()).then((ex: Example[]) => Array.isArray(ex) && ex.length && setExamples(ex)).catch(() => {})
+    fetch('/demo/index.json').then(r => r.ok ? r.json() : Promise.reject()).then((d: DemoRun[]) => Array.isArray(d) && setDemos(d)).catch(() => {})
+    fetch(api('/api/health')).then(r => r.ok ? r.json() : Promise.reject()).then(h => setHealth({ ok: true, ...h })).catch(() => setHealth({ ok: false }))
   }, [])
 
   const go = () => { if (prompt.trim()) startLive(prompt.trim(), color) }
@@ -76,6 +80,23 @@ export function Landing() {
             </button>
           ))}
         </motion.div>
+
+        {demos.length > 0 && (
+          <motion.div className="demos" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.9 }}>
+            <div className="demos-label">
+              {health && !health.ok ? 'ENGINE OFFLINE · live runs need the backend — replay a recorded run:' : 'OR REPLAY A RECORDED RUN'}
+            </div>
+            <div className="demos-row">
+              {demos.map(d => (
+                <button key={d.run_id} className="demo-card" title={d.prompt} onClick={() => { setPrompt(d.prompt); startReplay(d.run_id) }}>
+                  <span className="demo-name">▶ {d.name}</span>
+                  <span className="demo-tag">{d.tagline}</span>
+                  <span className="demo-stats">{d.stats.components} parts · {Math.round(d.stats.total_trace_mm)} mm · {d.stats.vias} vias · {d.stats.drc_errors === 0 ? 'DRC PASS' : `${d.stats.drc_errors} DRC`}{d.stats.kicad_drc_passed ? ' · KiCad ✓' : ''}</span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   )
