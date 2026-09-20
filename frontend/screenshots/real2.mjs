@@ -1,0 +1,13 @@
+import { chromium } from 'playwright'
+const browser = await chromium.launch({ args: ['--use-angle=metal', '--ignore-gpu-blocklist'] })
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+const errs = []; page.on('pageerror', e => errs.push(e.message.slice(0, 200)))
+await page.goto('http://localhost:5173/?replay=0f81c6b0e6&speed=8', { waitUntil: 'load' })
+await page.waitForTimeout(8000)
+await page.evaluate(() => { const els = document.querySelectorAll('.scroll'); els.forEach(e => e.scrollTop = e.scrollHeight) })
+await page.waitForTimeout(600)
+await page.screenshot({ path: 'screenshots/real_output.png' })
+await page.getByRole('button', { name: 'SCHEMATIC', exact: true }).click(); await page.waitForTimeout(2500)
+await page.screenshot({ path: 'screenshots/real_schematic.png' })
+console.log(errs.join('\n'))
+await browser.close()
