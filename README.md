@@ -4,6 +4,8 @@
 > picks the parts, writes the netlist, and a from-scratch EDA engine places, routes, checks, simulates and exports
 > a fab-ready 2-layer board — every step streamed and animated in the browser.
 
+**Live demo:** https://pcb-fab.vercel.app — the UI on Vercel with four recorded runs you can replay (the design engine itself runs locally; see [Deploying](#deploying)).
+
 ![ETCH finished board](docs/board-3d.png)
 
 ```
@@ -127,6 +129,20 @@ Trace 0.2–0.6 mm by net class, routing clearance 0.18 mm, vias 0.6/0.3 mm, cop
   connector footprints against the manufacturer drawings before ordering.
 - **No schematic file.** The schematic is a browser view; the netlist is exported as JSON and inside the `.kicad_pcb`.
 - The thermal and SPICE models are deliberately simple first-order models meant to catch gross problems, not sign-off tools.
+
+## Deploying
+
+The front-end is a static Vite build and lives on Vercel (`frontend/vercel.json`): https://pcb-fab.vercel.app.
+It ships with the recorded runs in `frontend/public/demo/` so replays, Gerber downloads and KiCad renders work with no
+backend at all. The engine (FastAPI + WebSockets, multi-minute CPU jobs, KiCad, ngspice, the Claude CLI) needs a real
+machine — run it locally or on any VM/container and point the UI at it:
+
+```bash
+cd frontend && vercel env add VITE_BACKEND_URL production   # e.g. https://etch.yourdomain.com  (or an ngrok/cloudflared tunnel to localhost:8000)
+vercel --prod
+```
+
+Without `VITE_BACKEND_URL` the UI uses its own origin (`/api`, `/ws`), which is what the Vite dev proxy expects.
 
 ## Contributing
 
