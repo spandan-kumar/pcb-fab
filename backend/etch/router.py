@@ -145,6 +145,22 @@ class Router:
                 self.keepout |= ant
                 self.hard[0] |= ant
                 self.hard[1] |= ant
+        # no top-layer routing underneath small parts (passives, ICs, switches, LEDs, crystals): it is legal but looks
+        # like traces "crossing" components and makes rework impossible. Own pads stay routable (unblocked per net).
+        self.under_body = np.zeros((ny, nx), dtype=bool)
+        for c in b.components:
+            fp = c.footprint
+            if fp.style in ("module", "connector", "usb", "header", "hole", "tht", "electrolytic") or fp.body_w * fp.body_h > 60:
+                continue
+            hw, hh = fp.body_w / 2 - 0.15, fp.body_h / 2 - 0.15
+            if hw <= 0 or hh <= 0:
+                continue
+            corners = [rotate(sx * hw, sy * hh, c.rot) for sx in (-1, 1) for sy in (-1, 1)]
+            x0, x1 = c.x + min(p[0] for p in corners), c.x + max(p[0] for p in corners)
+            y0, y1 = c.y + min(p[1] for p in corners), c.y + max(p[1] for p in corners)
+            self.under_body |= (X >= x0) & (X <= x1) & (Y >= y0) & (Y <= y1)
+        self.under_body_l = np.zeros((2, ny, nx), dtype=bool)
+        self.under_body_l[0] = self.under_body
         self.owner[self.hard] = -1
         self.X, self.Y = X, Y
         pseudo = len(self.nets)
@@ -308,7 +324,7 @@ class Router:
 
     # ------------------------------------------------------------------ A*
     def _astar(self, starts, target, blocked, via_ok, region, goal_bottom=False, via_cost=14.0, layer_mult=(1.0, 1.35),
-               turn_pen=0.6, hweight=1.2, max_nodes=400000, soft=None, via_soft=None, soft_pen=30.0):
+               turn_pen=0.6, hweight=1.2, max_nodes=400000, soft=None, via_soft=None, soft_pen=30.0, extra=None, extra_pen=float(os.environ.get("ETCH_BODY_PEN", "1.5"))):
         nx, NL = self.nx, self.NL
         y0, y1, x0, x1 = region
         blk = blocked.ravel().tolist()
@@ -316,6 +332,7 @@ class Router:
         vsft = via_soft.ravel().tolist() if via_soft is not None else None
         tgt = target.ravel().tolist() if not goal_bottom else None
         vok = via_ok.ravel().tolist()
+        xtra = extra.ravel().tolist() if extra is not None else None
         if not goal_bottom:
             tys, txs = np.nonzero(target[0] | target[1])
             if len(tys) == 0:
@@ -370,6 +387,8 @@ class Router:
                 ng = gc + cost * lm + (turn_pen if (pd != -1 and pd != d) else 0.0)
                 if sft is not None and sft[nidx]:
                     ng += soft_pen
+                if xtra is not None and xtra[nidx]:
+                    ng += extra_pen
                 if ng < g.get(nidx, INF):
                     g[nidx] = ng
                     parent[nidx] = idx
@@ -609,12 +628,12 @@ class Router:
             hardb[l, y, x] = False
         if soft:
             region = self._region(starts, target, 10000)
-            return self._astar(starts, target, hardb, ~via_hard, region, soft=softb, via_soft=via_soft, max_nodes=600000)
+            return self._astar(starts, target, hardb, ~via_hard, region, soft=softb, via_soft=via_soft, max_nodes=600000, extra=self.under_body_l)
         blocked = hardb | softb
         via_ok = ~(via_hard | via_soft)
         for margin in (50, 10000):
             region = self._region(starts, target, margin)
-            path = self._astar(starts, target, blocked, via_ok, region)
+            path = self._astar(starts, target, blocked, via_ok, region, extra=self.under_body_l)
             if path is not None:
                 return path
             if self.time_left() < 5:
@@ -645,7 +664,7 @@ class Router:
         path = None
         for margin in (15, 45, 120):
             region = self._region(starts, None, margin)
-            path = self._astar(starts, target, blocked, via_ok, region, goal_bottom=goal_bottom, via_cost=2.0)
+            path = self._astar(starts, target, blocked, via_ok, region, goal_bottom=goal_bottom, via_cost=2.0, extra=self.under_body_l)
             if path is not None:
                 break
         to_reroute = []

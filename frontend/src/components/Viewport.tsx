@@ -1,3 +1,4 @@
+import { usePop } from '../util/usePop'
 import { Suspense, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useStore, type Tab } from '../store'
@@ -25,6 +26,9 @@ export function Viewport() {
   const pour = useStore(s => s.pour)
   const stats = useStore(s => s.stats)
   const flash = useStore(s => s.flash)
+  const view = useStore(s => s.view); const setView = useStore(s => s.setView)
+  const popNets = usePop(routing.routed)
+  const popVias = usePop(routing.vias)
   const failedNets = useStore(s => s.failedNets)
   const [, tick] = useState(0)
   useEffect(() => { if (!flash) return; const id = setTimeout(() => tick(n => n + 1), 2600); return () => clearTimeout(id) }, [flash])
@@ -36,6 +40,7 @@ export function Viewport() {
       <div className="tabs">
         {TABS.map(t => <button key={t.id} className={`tab ${tab === t.id ? 'on' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>)}
         <div className="right">
+          {tab === 'board' && <button className={`badge toggle ${view === 'top' ? 'on' : ''}`} onClick={() => setView(view === 'top' ? 'iso' : 'top')} title="Toggle top-down view">{view === 'top' ? '⬒ TOP' : '◈ 3D'}</button>}
           {stage === 'placement' && placement && <span className="badge cyan">anneal T={fmt(placement.temperature, 1)} · cost {fmtInt(placement.cost)}</span>}
           {stage === 'routing' && <span className="badge copper">routing · {routing.routed}/{routing.total}</span>}
           {pour && <span className="badge cyan">B.Cu GND pour{pour.islands_healed ? ` · ${pour.islands_healed} islands healed` : ''}{pour.orphans ? ` · ${pour.orphans} orphans` : ''}</span>}
@@ -67,9 +72,9 @@ export function Viewport() {
         )}
         {tab !== 'schematic' && (
           <div className="hud">
-            <div className="cell"><div className="k">nets</div><div className="v cyan">{routing.routed}<small>/ {routing.total}</small></div></div>
-            <div className="cell"><div className="k">trace</div><div className="v copper">{fmt(stats?.total_trace_mm ?? routing.length_mm, 0)}<small>mm</small></div></div>
-            <div className="cell"><div className="k">vias</div><div className="v copper">{stats?.vias ?? routing.vias}</div></div>
+            <div className={`cell ${popNets}`}><div className="k">nets</div><div className="v cyan">{routing.routed}<small>/ {routing.total}</small></div></div>
+            <div className={`cell ${popVias}`}><div className="k">trace</div><div className="v copper">{fmt(stats?.total_trace_mm ?? routing.length_mm, 0)}<small>mm</small></div></div>
+            <div className={`cell ${popVias}`}><div className="k">vias</div><div className="v copper">{stats?.vias ?? routing.vias}</div></div>
             <div className="cell"><div className="k">drc</div><div className={`v ${errs == null ? '' : errs ? 'mag' : 'green'}`}>{errs == null ? '—' : errs}</div></div>
             <div className="cell"><div className="k">elapsed</div><div className="v">{fmtTime(stats?.elapsed_s ?? elapsed)}</div></div>
           </div>

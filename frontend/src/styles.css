@@ -321,3 +321,45 @@ table.rails td.net { color: var(--copper-2); font-weight: 500; }
 .demo-name { font-weight: 700; letter-spacing: 0.08em; font-size: 12px; color: var(--copper, #ffb86b); }
 .demo-tag { font-size: 11px; color: var(--text); opacity: 0.85; }
 .demo-stats { font-size: 10px; color: var(--dim); letter-spacing: 0.04em; }
+
+.badge.toggle { cursor: pointer; background: rgba(7,9,12,0.6); border: 1px solid var(--line); color: var(--dim); font-family: var(--mono); letter-spacing: 0.12em; transition: all .15s; }
+.badge.toggle:hover, .badge.toggle.on { color: var(--cyan, #3ee7ff); border-color: var(--cyan, #3ee7ff); box-shadow: 0 0 12px rgba(62,231,255,0.25); }
+
+/* ---------------- microanimations ---------------- */
+@keyframes popV { 0% { transform: scale(1); } 35% { transform: scale(1.08); text-shadow: 0 0 18px currentColor; } 100% { transform: scale(1); } }
+@keyframes popBorder { 0% { border-color: var(--copper); box-shadow: 0 0 18px rgba(232,163,92,0.35); } 100% { border-color: var(--line); box-shadow: none; } }
+.tile, .hud .cell { transition: border-color .3s, transform .2s; }
+.tile.pop, .hud .cell.pop { animation: popBorder .45s ease-out; }
+.tile.pop .v, .hud .cell.pop .v { animation: popV .45s cubic-bezier(.2,.8,.2,1); display: inline-block; transform-origin: left center; }
+.tile:hover { transform: translateY(-1px); border-color: var(--line-2); }
+
+@keyframes shine { from { transform: translateX(-120%) skewX(-18deg); } to { transform: translateX(220%) skewX(-18deg); } }
+.chip, .demo-card, .download, .forge, .comp { position: relative; overflow: hidden; }
+.chip::after, .demo-card::after, .download::after, .forge::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 35%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent); transform: translateX(-120%) skewX(-18deg); pointer-events: none; }
+.chip:hover::after, .demo-card:hover::after, .download:hover::after, .forge:hover::after { animation: shine .7s ease-out; }
+.forge:active { transform: translateY(1px) scale(0.985); box-shadow: 0 0 18px rgba(232,163,92,0.35); }
+.chip:active, .demo-card:active, .tab:active { transform: scale(0.97); }
+.chip, .demo-card, .tab, .swatch, .comp, .badge.toggle, .download { transition: transform .15s cubic-bezier(.2,.8,.2,1), border-color .15s, background .15s, box-shadow .2s, color .15s; }
+.swatch:hover { transform: scale(1.18); }
+
+.comp::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--copper); transform: scaleY(0); transition: transform .2s ease-out; transform-origin: top; }
+.comp:hover { transform: translateX(3px); }
+.comp:hover::before { transform: scaleY(1); }
+
+@keyframes stageDone { 0% { transform: scaleY(1); filter: brightness(1); } 40% { transform: scaleY(2.2); filter: brightness(1.8); } 100% { transform: scaleY(1); filter: brightness(1); } }
+.stage.done .bar { animation: stageDone .5s ease-out; }
+@keyframes ledPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(124,255,90,0.6); } 60% { box-shadow: 0 0 0 5px rgba(124,255,90,0); } }
+.health .led.ok { animation: ledPulse 1.8s ease-out infinite; }
+
+.tab { position: relative; }
+.tab::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; background: var(--cyan); transform: scaleX(0); transition: transform .22s cubic-bezier(.2,.8,.2,1); box-shadow: 0 0 10px var(--cyan); }
+.tab.on::after { transform: scaleX(1); }
+
+@keyframes breathe { 0%, 100% { text-shadow: 0 0 30px rgba(232,163,92,0.25), 0 0 2px rgba(255,255,255,0.4); } 50% { text-shadow: 0 0 60px rgba(232,163,92,0.55), 0 0 2px rgba(255,255,255,0.6); } }
+.hero h1 { animation: breathe 4s ease-in-out infinite; }
+.forge:hover span, .forge:hover { letter-spacing: 0.22em; }
+.forge { transition: transform .15s, box-shadow .2s, letter-spacing .25s; }
+
+@keyframes cardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.drc-row, .rail-row, .file { animation: cardIn .3s ease-out both; }
+.badge.green { animation: popV .5s ease-out; }

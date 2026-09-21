@@ -12,6 +12,7 @@ export default function App() {
 
   useEffect(() => {
     const q = new URLSearchParams(location.search)
+    if (q.get('view') === 'top') useStore.getState().setView('top')
     if (q.get('speed')) useStore.getState().setReplaySpeed(parseFloat(q.get('speed')!) || 1)
     if (q.get('mock')) startMock((q.get('color') as never) || 'black')
     else if (q.get('replay')) startReplay(q.get('replay')!)

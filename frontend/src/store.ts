@@ -49,6 +49,7 @@ export interface State {
   tab: Tab
   userTab: boolean
   exploded: boolean
+  view: 'iso' | 'top'
   layerVis: Record<string, boolean>
   connection: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
   toast: string | null
@@ -61,6 +62,7 @@ export interface State {
   setHoverNet: (n: string | null) => void
   selectViolation: (v: Violation | null) => void
   setExploded: (b: boolean) => void
+  setView: (v: 'iso' | 'top') => void
   toggleLayer: (l: string) => void
   setPrompt: (p: string) => void
   setColor: (c: MaskColor) => void
@@ -109,6 +111,7 @@ const base = () => ({
   tab: 'board' as Tab,
   userTab: false,
   exploded: false,
+  view: 'iso' as 'iso' | 'top',
   layerVis: { 'F.Cu': true, 'F.Mask': true, 'F.SilkS': true, 'Edge.Cuts': true, 'B.Cu': true, 'Drill': true } as Record<string, boolean>,
   runId: null as string | null,
 })
@@ -282,6 +285,7 @@ export const useStore = create<State>((set, get) => ({
     set({ selectedViolation: v })
   },
   setExploded: (exploded) => set({ exploded }),
+  setView: (view) => set({ view }),
   toggleLayer: (l) => set({ layerVis: { ...get().layerVis, [l]: !get().layerVis[l] } }),
   setPrompt: (prompt) => set({ prompt }),
   setColor: (color) => set({ color }),
@@ -293,7 +297,7 @@ export const useStore = create<State>((set, get) => ({
   reset: () => {
     live.traceQueue = []; live.lastTraceStart = 0
     live.targets.clear(); live.current.clear(); live.landed.clear(); live.finalSnap = false
-    set({ ...base(), phase: 'running', error: null, toast: null })
+    set({ ...base(), view: get().view, phase: 'running', error: null, toast: null })
   },
 }))
 

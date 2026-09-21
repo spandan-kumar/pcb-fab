@@ -3,12 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
 import { fmt, fmtBytes, fmtInt } from '../util/format'
 import { useCountUp } from '../util/useCountUp'
+import { usePop } from '../util/usePop'
 import type { Spice } from '../protocol'
 
 function Tile({ k, v, unit, tone, d = 0 }: { k: string; v: number; unit?: string; tone?: string; d?: number }) {
   const n = useCountUp(v, 450)
+  const pop = usePop(v)
   return (
-    <div className={`tile ${tone ?? ''}`}>
+    <div className={`tile ${tone ?? ''} ${pop}`}>
       <div className="k">{k}</div>
       <div className="v">{d ? fmt(n, d) : fmtInt(n)}{unit && <small>{unit}</small>}</div>
     </div>

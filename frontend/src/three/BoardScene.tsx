@@ -182,11 +182,12 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
   const exploded = useStore(s => s.exploded)
   const tab = useStore(s => s.tab)
   const phase = useStore(s => s.phase)
+  const view = useStore(s => s.view)
   const explodeAt = useRef(0)
   const resetAt = useRef(0)
   useEffect(() => { explodeAt.current = performance.now() }, [exploded])
   // glide back to the default 3/4 view whenever the tab changes or the run completes
-  useEffect(() => { if (!decor) resetAt.current = performance.now() }, [tab, phase, decor])
+  useEffect(() => { if (!decor) resetAt.current = performance.now() }, [tab, phase, decor, view])
   useEffect(() => {
     const key = `${center[0]},${center[1]},${size}`
     if (fitted.current === key) return
@@ -207,11 +208,13 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
       c.update()
       return
     }
-    if (!decor && !exploded && performance.now() - resetAt.current < 2200 && performance.now() - explodeAt.current > 2500) {
+    if (!decor && !exploded && performance.now() - resetAt.current < 3000 && performance.now() - explodeAt.current > 2500) {
       const d = size * 2.0
-      const want = new THREE.Vector3(center[0] - d * 0.45, center[1] - d * 0.8, d * 0.7)
-      camera.position.lerp(want, Math.min(1, dt * 2.5))
-      c.target.lerp(new THREE.Vector3(center[0], center[1], 0.8), Math.min(1, dt * 2.5))
+      const want = view === 'top'
+        ? new THREE.Vector3(center[0], center[1] - size * 0.02, size * 2.1)
+        : new THREE.Vector3(center[0] - d * 0.45, center[1] - d * 0.8, d * 0.7)
+      camera.position.lerp(want, Math.min(1, dt * 4))
+      c.target.lerp(new THREE.Vector3(center[0], center[1], 0.8), Math.min(1, dt * 4))
       c.update()
       return
     }
@@ -226,10 +229,10 @@ function CameraRig({ center, size, decor }: { center: [number, number]; size: nu
       if (camera.position.z < minZ) camera.position.z += (minZ - camera.position.z) * Math.min(1, dt * 3)
       c.update()
     }
-    c.autoRotate = idle.current || decor
+    c.autoRotate = (idle.current || decor) && view !== 'top'
   })
   const onStart = () => { idle.current = false; window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { idle.current = true }, 7000) }
-  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} autoRotate autoRotateSpeed={decor ? 0.9 : 0.5} minDistance={8} maxDistance={400} minPolarAngle={0.12} maxPolarAngle={Math.PI * 0.46} onStart={onStart} />
+  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} autoRotate autoRotateSpeed={decor ? 0.9 : 0.5} minDistance={8} maxDistance={400} minPolarAngle={view === 'top' ? 0 : 0.12} maxPolarAngle={Math.PI * 0.46} onStart={onStart} />
 }
 
 /* ------------------------------------------------------------------ */
