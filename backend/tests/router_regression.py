@@ -15,6 +15,7 @@ from etch.drc import run_drc
 from etch.kicad_export import run_kicad_drc, write_kicad_pcb, write_kicad_pro
 from etch.model import Board, Component, Net
 from etch.pipeline import _keepouts
+from etch.power_routing import width_summary
 from etch.router import Router
 
 
@@ -35,6 +36,8 @@ def main():
     parser.add_argument('--budget', type=float, default=200)
     parser.add_argument('--grid', type=float, help='Force one grid; disables automatic refinement')
     parser.add_argument('--kicad', action='store_true', help='Require an independent KiCad DRC/connectivity check')
+    parser.add_argument('--strict-kicad', action='store_true', help='Require KiCad with zero errors, warnings and unconnected items')
+    parser.add_argument('--strict-power', action='store_true', help='Also fail on unmet power-width targets')
     args = parser.parse_args()
     names = args.boards or list(json.loads((Path(__file__).parent / 'fixtures/router_boards.json').read_text()))
     failed = False
@@ -44,9 +47,12 @@ def main():
         result = Router(board, time_budget=args.budget, grid_pitch=args.grid).route_all()
         drc = run_drc(board, result['failed'], result['orphan_gnd'])
         report = {'board': name, 'seconds': round(time.monotonic() - started, 2),
-                  **result, 'drc_errors': drc['errors'], 'drc_warnings': drc['warnings']}
+                  **result, 'drc_errors': drc['errors'], 'drc_warnings': drc['warnings'],
+                  'power_widths': [{'net': n.name, **width_summary(board, n)} for n in board.nets if n.cls == 'power']}
         passed = not result['failed'] and not result['orphan_gnd'] and drc['passed']
-        if args.kicad:
+        if args.strict_power:
+            passed = passed and all(p['width_ok'] for p in report['power_widths'])
+        if args.kicad or args.strict_kicad:
             # Keep files/reports available for inspection when a board fails.
             directory = Path(tempfile.mkdtemp(prefix='etch-router-regression-'))
             pcb = directory / f'{name}.kicad_pcb'
@@ -55,6 +61,8 @@ def main():
             kicad = run_kicad_drc(str(pcb)) or {'available': False}
             report.update(kicad=kicad, artifacts=str(directory))
             passed = passed and kicad.get('available', False) and kicad.get('drc_passed', False)
+            if args.strict_kicad:
+                passed = passed and kicad.get('warnings') == 0
         report['passed'] = passed
         failed |= not passed
         print(json.dumps(report), flush=True)

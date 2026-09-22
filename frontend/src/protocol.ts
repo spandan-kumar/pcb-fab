@@ -67,7 +67,11 @@ export interface ThermalFrame {
   frame: number; total: number; cols: number; rows: number; grid: number[]
   min_c: number; max_c: number; hotspots: { ref: string; c: number }[]
 }
-export interface Rail { net: string; voltage: number; current_ma: number; length_mm: number; width_mm: number; resistance_mohm: number; drop_mv: number; ok: boolean }
+export interface Rail {
+  net: string; voltage: number; current_ma: number; length_mm: number; width_mm: number
+  resistance_mohm: number; drop_mv: number; ok: boolean
+  target_width_mm?: number; neckdown_mm?: number; constrained_mm?: number; width_ok?: boolean; drop_ok?: boolean
+}
 export interface SpiceSeries { name: string; x: number[]; y: number[]; axis?: 'left' | 'right' }
 export interface Spice { title: string; x_label: string; y_label: string; series: SpiceSeries[]; undershoot_mv?: number; min_v?: number }
 export interface Artifacts {
@@ -80,6 +84,7 @@ export interface Artifacts {
 export interface Stats {
   components: number; nets: number; traces: number; vias: number
   total_trace_mm: number; routed_pct: number; drc_errors: number; elapsed_s: number
+  power_width_warnings?: number
 }
 
 export type Ev =

@@ -115,7 +115,7 @@ Pad coordinates are relative to the footprint origin, unrotated. Footprint place
 {"type":"routing_progress","routed":12,"total":47,"length_mm":312.4,"vias":9}
 {"type":"pour","layer":"B.Cu","net":"GND","clearance":0.3}
 ```
-A net may produce several `trace` events (one per polyline segment run per layer). The bottom layer is a GND pour: render B.Cu as solid copper with a `clearance`-wide gap around non-GND B.Cu traces, vias and through-pads.
+A net may produce several `trace` events (one per constant-width polyline run per layer). Power paths can change width near pads or obstacles; render each event's actual `width`, not a single net-wide width. The bottom layer is a GND pour: render B.Cu as solid copper with a `clearance`-wide gap around non-GND B.Cu traces, vias and through-pads.
 
 `ripup` removes a net's previous copper. `reset_routing` clears all routing geometry, failures and pour state before
 a refinement attempt or restoration of the better result; subsequent events rebuild it. The final `routing_progress`
@@ -128,6 +128,9 @@ not imply that every net succeeded; use DRC and the independent KiCad check for 
  "violations":[{"code":"clearance","severity":"error","message":"Trace SDA to pad R3.1: 0.11 mm < 0.127 mm","x":12.1,"y":9.3,"layer":"F.Cu"}],
  "checks":[{"name":"Clearance","count":312,"ok":true},{"name":"Trace width","count":47,"ok":true},{"name":"Connectivity","count":47,"ok":true}]}
 ```
+`passed` means no errors, not no warnings. `power_width` warnings and the `Power-width targets` check flag
+power copper below its current-class target outside permitted pad escapes (or missing copper). These review
+warnings are separate from minimum manufacturing width/clearance errors and independent KiCad results.
 
 ### thermal — animation frames of a steady-state heat solve
 ```json
@@ -135,10 +138,21 @@ not imply that every net succeeded; use DRC and the independent KiCad check for 
  "hotspots":[{"ref":"U2","c":48.2}]}
 ```
 
-### power — DC analysis of power rails
+### power — width-policy audit and approximate DC analysis of power rails
 ```json
-{"type":"power","rails":[{"net":"3V3","voltage":3.3,"current_ma":600,"length_mm":38.2,"width_mm":0.5,"resistance_mohm":22.4,"drop_mv":13.4,"ok":true}]}
+{"type":"power","rails":[{"net":"3V3","voltage":3.3,"current_ma":600,"length_mm":38.2,"width_mm":0.2,"target_width_mm":0.6,"neckdown_mm":2.1,"constrained_mm":0,"width_ok":true,"resistance_mohm":22.4,"drop_mv":6.7,"drop_ok":true,"ok":true}]}
 ```
+`width_mm` is the minimum routed trace width (zero if no copper). `target_width_mm` follows the existing
+current-class policy: 0.4 mm below 600 mA, 0.6 mm from 600 to below 1500 mA, and 1.0 mm at 1500 mA or more.
+`neckdown_mm` is the total below-target length within 1 mm of a small pad's bounding rectangle, on a layer
+that pad occupies. This is a geometric neighbourhood allowance, not a 1 mm path-length cap.
+`constrained_mm` is the remaining below-target length; the audit samples spans no longer than 0.2 mm and
+requires both endpoints inside one permitted pad neighbourhood. `width_ok` requires routed copper and no
+constrained spans. `drop_ok` checks the approximate drop against 2% of rail voltage; `ok` requires both.
+Neither check certifies ampacity, via capacity or branch-current distribution.
+
+The new width-audit fields and `drop_ok` are optional for older recordings. Missing width metadata means
+**not checked**, not a passing audit; the UI retains legacy `ok` as the drop-status fallback.
 
 ### spice — optional, if ngspice is available (a transient sim of the power input stage)
 ```json
@@ -154,9 +168,10 @@ not imply that every net succeeded; use DRC and the independent KiCad check for 
 
 ### done / error
 ```json
-{"type":"done","stats":{"components":24,"nets":31,"traces":112,"vias":18,"total_trace_mm":642.1,"routed_pct":100,"drc_errors":0,"elapsed_s":48.2}}
+{"type":"done","stats":{"components":24,"nets":31,"traces":112,"vias":18,"total_trace_mm":642.1,"routed_pct":100,"drc_errors":0,"power_width_warnings":0,"elapsed_s":48.2}}
 {"type":"error","message":"..."}
 ```
+`power_width_warnings` counts rails failing the width audit, separately from `drc_errors`; it is absent in older recordings.
 
 ## HTTP
 

@@ -203,6 +203,7 @@ async def design(prompt: str, options: dict, send: Callable[[dict], Awaitable[No
             "total_trace_mm": round(sum(t.length for t in board.traces), 1),
             "routed_pct": round(100.0 * route_res["routed"] / max(1, route_res["total"]), 1),
             "drc_errors": drc["errors"], "ripups": route_res["ripups"],
+            "power_width_warnings": sum(not r['width_ok'] for r in rails),
         }
         exp = await run.run_blocking(export_all, board, design_json, drc, stats, run.dir, keepouts, True)
         files = exp["files"]

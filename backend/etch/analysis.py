@@ -12,6 +12,7 @@ from typing import Callable
 import numpy as np
 
 from .model import Board
+from .power_routing import width_summary
 
 RHO_CU = 1.68e-8  # ohm·m
 T_CU = 35e-6  # 1 oz copper, m
@@ -102,10 +103,12 @@ def power_rails(board: Board) -> list[dict]:
         I = (n.current_ma or 100) / 1000.0
         # worst-case: the whole current flows through half the total copper path
         drop = I * R * 0.5
+        widths = width_summary(board, n)
+        drop_ok = drop < 0.02 * (n.voltage or 3.3)
         rails.append({"net": n.name, "voltage": n.voltage, "current_ma": n.current_ma or 100, "length_mm": round(length, 1),
                       "width_mm": round(wmin if wmin < 9 else 0, 2), "resistance_mohm": round(R * 1000, 1),
-                      "drop_mv": round(drop * 1000, 1), "vias": nvias,
-                      "ok": drop < 0.02 * (n.voltage or 3.3)})
+                      "drop_mv": round(drop * 1000, 1), "vias": nvias, **widths, "drop_ok": drop_ok,
+                      "ok": drop_ok and widths['width_ok']})
     return rails
 
 

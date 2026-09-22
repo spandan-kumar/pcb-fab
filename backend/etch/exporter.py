@@ -11,6 +11,7 @@ from datetime import datetime
 from .gerber import write_gerbers
 from .kicad_export import write_kicad_pcb, write_kicad_pro, run_kicad_drc, kicad_export_gerbers, kicad_render_png
 from .model import Board
+from .power_routing import width_summary
 
 
 def bom_csv(board: Board) -> str:
@@ -66,6 +67,20 @@ def readme(board: Board, design: dict, drc: dict, kicad: dict | None, stats: dic
     if kicad and kicad.get("available"):
         lines.append(f"- KiCad {kicad.get('kicad_version', '')} DRC: {'PASS' if kicad.get('drc_passed') else 'FAIL'} "
                      f"({kicad.get('violations', 0)} errors, {kicad.get('warnings', 0)} warnings, {kicad.get('unconnected', 0)} unconnected)")
+    # The UI's DRC list is capped; audit the board so the package cannot lose
+    # a power warning behind a large number of unrelated violations.
+    power_warnings = []
+    for net in board.nets:
+        if net.cls != 'power':
+            continue
+        widths = width_summary(board, net)
+        if not widths['width_ok']:
+            detail = (f"{widths['constrained_mm']:.2f} mm below target outside pad escapes"
+                      if any(t.net == net.name for t in board.traces) else 'no routed copper to verify')
+            power_warnings.append(f'{net.name}: target {net.width:g} mm; {detail}')
+    if power_warnings:
+        lines += ['', '## Power routing needs review'] + [f'- {message}' for message in power_warnings]
+    lines += ['', 'Width targets are routing policy only; KiCad connectivity/clearance passing does not certify rail current capacity.']
     lines += ["", "## Stats"] + [f"- {k}: {v}" for k, v in stats.items()]
     lines += ["", "## Notes from the agent"] + [f"- {n}" for n in design.get("notes", [])]
     return "\n".join(lines) + "\n"

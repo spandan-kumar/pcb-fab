@@ -228,6 +228,19 @@ def run_drc(board: Board, routing_failed: list[str] | None = None, orphan_gnd: i
         violations.append({"code": "unconnected", "severity": "error", "layer": "F.Cu", "x": 0, "y": 0, "message": f"Net {name} is not fully routed"})
     if orphan_gnd:
         violations.append({"code": "plane_island", "severity": "error", "layer": "B.Cu", "x": 0, "y": 0, "message": f"{orphan_gnd} GND via(s) on an isolated plane island"})
+    from .power_routing import width_summary
+
+    for net in board.nets:
+        if net.cls != 'power' or len(net.pins) < 2:
+            continue
+        widths = width_summary(board, net)
+        if not widths['width_ok']:
+            message = (f"{net.name}: {widths['constrained_mm']:.2f} mm of copper below the {net.width:g} mm "
+                       f"power-width target outside pad escapes; review load current and routing")
+            if not any(t.net == net.name for t in board.traces):
+                message = f"{net.name}: no routed copper to verify against the {net.width:g} mm power-width target"
+            violations.append({'code': 'power_width', 'severity': 'warning', 'layer': 'F.Cu', 'x': 0, 'y': 0,
+                               'message': message})
     errors = [v for v in violations if v["severity"] == "error"]
     checks = [
         {"name": "Copper clearance", "count": n_pairs, "ok": not any(v["code"] == "clearance" for v in violations)},
@@ -236,6 +249,8 @@ def run_drc(board: Board, routing_failed: list[str] | None = None, orphan_gnd: i
         {"name": "Board edge clearance", "count": n_edge, "ok": not any(v["code"] == "edge_clearance" for v in violations)},
         {"name": "Courtyard overlap", "count": n_court, "ok": not any(v["code"] == "courtyard" for v in violations)},
         {"name": "Connectivity", "count": n_nets, "ok": not any(v["code"] in ("unconnected", "plane_island") for v in violations)},
+        {"name": "Power-width targets", "count": sum(n.cls == 'power' and len(n.pins) >= 2 for n in board.nets),
+         "ok": not any(v['code'] == 'power_width' for v in violations)},
     ]
     return {"passed": len(errors) == 0, "rules": RULES, "violations": violations[:200], "checks": checks,
             "errors": len(errors), "warnings": len(violations) - len(errors)}

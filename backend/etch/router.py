@@ -14,7 +14,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .footprints import ANT_H
-from .drc import RULES
+from .drc import RULES, Item, collect_items, distance, _pt_seg
 from .model import Board, Component, Trace, Via, rotate
 
 G = 0.2  # default grid pitch mm
@@ -37,13 +37,25 @@ def dilate(mask: np.ndarray, R: float) -> np.ndarray:
     r = int(math.ceil(R))
     out = np.zeros_like(mask)
     ny, nx = mask.shape
-    for dy in range(-r, r + 1):
-        for dx in range(-r, r + 1):
-            if dx * dx + dy * dy >= R * R:
-                continue
-            ys0, ys1 = max(0, dy), min(ny, ny + dy)
-            xs0, xs1 = max(0, dx), min(nx, nx + dx)
-            out[ys0:ys1, xs0:xs1] |= mask[ys0 - dy:ys1 - dy, xs0 - dx:xs1 - dx]
+    # Each row of the disk is a horizontal interval. Grow those intervals
+    # cumulatively, then shift them vertically: O(R) whole-array operations
+    # instead of one for each of the O(R²) disk offsets. Integer squared
+    # distances retain the original strict '< R' boundary exactly.
+    limit = math.ceil(R * R) - 1
+    rows = [(min(r, nx - 1, math.isqrt(limit - dy * dy)), dy)
+            for dy in range(min(r, ny - 1) + 1) if dy * dy <= limit]
+    horizontal = mask.copy()
+    expanded = 0
+    for reach, dy in sorted(rows):
+        while expanded < reach:
+            expanded += 1
+            horizontal[:, expanded:] |= mask[:, :-expanded]
+            horizontal[:, :-expanded] |= mask[:, expanded:]
+        if dy:
+            out[dy:] |= horizontal[:-dy]
+            out[:-dy] |= horizontal[dy:]
+        else:
+            out |= horizontal
     return out
 
 
@@ -84,6 +96,8 @@ class RouteRec:
     width: float
     traces: list[Trace]
     vias: list[Via]
+    grid_offset: float = 0.0
+    cell_radii: list[float] | None = None
 
 
 class Router:
@@ -382,12 +396,15 @@ class Router:
             def h(x, y):
                 return 0.0
         g, parent, pdir = {}, {}, {}
+        path_vias = {}
+        drill_gap2 = ((VIA_DRILL + RULES['hole_to_hole_mm'] - 1e-6) / self.grid) ** 2
         open_ = []
         for (l, y, x) in starts:
             idx = l * NL + y * nx + x
             g[idx] = 0.0
             parent[idx] = -1
             pdir[idx] = -1
+            path_vias[idx] = ()
             heapq.heappush(open_, (h(x, y), 0.0, idx))
         closed = set()
         n = 0
@@ -429,10 +446,14 @@ class Router:
                     g[nidx] = ng
                     parent[nidx] = idx
                     pdir[nidx] = d
+                    path_vias[nidx] = path_vias[idx]
                     heapq.heappush(open_, (ng + h(nxp, nyp), ng, nidx))
             vi = y * nx + x
             soft_via = vsft is not None and vsft[vi]
-            if vok[vi]:
+            # Existing holes are in via_ok; holes introduced earlier in this
+            # candidate path must also obey drill spacing before commit.
+            if vok[vi] and all((vx == x and vy == y) or (vx - x) ** 2 + (vy - y) ** 2 >= drill_gap2
+                               for vx, vy in path_vias[idx]):
                 ol = 1 - l
                 nidx = ol * NL + vi
                 if nidx not in closed and not blk[nidx]:
@@ -443,6 +464,7 @@ class Router:
                         g[nidx] = ng
                         parent[nidx] = idx
                         pdir[nidx] = -1
+                        path_vias[nidx] = path_vias[idx] + ((x, y),)
                         heapq.heappush(open_, (ng + h(x, y), ng, nidx))
         return None
 
@@ -457,7 +479,7 @@ class Router:
         return out
 
     # ------------------------------------------------------------------ commit / rip-up
-    def _commit(self, ni: int, w: float, path, start_pt=None, end_pt=None, pin_key=None) -> RouteRec:
+    def _commit(self, ni: int, w: float, path, start_pt=None, end_pt=None, pin_key=None, straight=False) -> RouteRec:
         traces, vias = [], []
         net = self.nets[ni].name if ni < len(self.nets) else f"N{ni}"
         own = ni + 1
@@ -504,7 +526,39 @@ class Router:
             run.append(end_pt)
         if len(run) >= 2:
             traces.append(Trace(net, "F.Cu" if run_layer == 0 else "B.Cu", w, _simplify(run)))
-        rec = RouteRec(ni, pin_key, list(path), w, traces, vias)
+        grid_offset = 0.0
+        if straight:
+            # The grid records occupancy, not the off-grid pad centres. Export
+            # the exact centre-to-centre link rather than snapping its copper.
+            traces = [Trace(net, "F.Cu" if run_layer == 0 else "B.Cu", w, [start_pt, end_pt])]
+            grid_offset = max(_pt_seg(x * self.grid, y * self.grid, *start_pt, *end_pt) for l, y, x in path)
+            for l, y, x in path:
+                if not self.is_via[y, x]:
+                    self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(w / 2 + grid_offset))
+        rec = RouteRec(ni, pin_key, list(path), w, traces, vias, grid_offset)
+        if ni < len(self.nets) and self.nets[ni].cls == 'power':
+            from .power_routing import widen_traces
+
+            reserved = []
+            for l in (0, 1):
+                ys, xs = np.nonzero(self.stub[l] & (self.owner[l] > 0) & (self.owner[l] != own))
+                reserved += [Item('circle', '', 'F.Cu' if l == 0 else 'B.Cu', 'escape',
+                                  (x * self.grid, y * self.grid), 0.1) for y, x in zip(ys, xs)]
+            traces = widen_traces(self.b, self.nets[ni], traces, reserved)
+            rec.traces = traces
+            rec.cell_radii = []
+            for l, y, x in path:
+                radius = w / 2 + grid_offset
+                for tr in traces:
+                    if tr.layer != ('F.Cu' if l == 0 else 'B.Cu'):
+                        continue
+                    for a, b in zip(tr.points, tr.points[1:]):
+                        offset = _pt_seg(x * self.grid, y * self.grid, *a, *b)
+                        if offset <= self.grid / math.sqrt(2) + 1e-6:
+                            radius = max(radius, tr.width / 2 + offset)
+                rec.cell_radii.append(radius)
+                if self.owner[l, y, x] == own:
+                    self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(radius))
         self.routes.setdefault(ni, []).append(rec)
         for t in traces:
             self.b.traces.append(t)
@@ -543,16 +597,17 @@ class Router:
                     self.b.vias.remove(v)
         self._mark_pads()
         for r in keep:
-            for (l, y, x) in r.path:
-                if self.owner[l, y, x] == 0:
+            for k, (l, y, x) in enumerate(r.path):
+                if self.owner[l, y, x] in (0, ni + 1):
                     self.owner[l, y, x] = ni + 1
-                    self.radius[l, y, x] = np.float32(r.width / 2)
+                    radius = r.cell_radii[k] if r.cell_radii is not None else r.width / 2 + r.grid_offset
+                    self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(radius))
             for v in r.vias:
                 i, j = self._cell(v.x, v.y)
                 self.is_via[j, i] = True
                 for ll in range(2):
                     self.owner[ll, j, i] = ni + 1
-                    self.radius[ll, j, i] = VIA_DIA / 2
+                    self.radius[ll, j, i] = max(self.radius[ll, j, i], VIA_DIA / 2)
                     self.stub[ll, j, i] = False
         self.ripups += 1
         if DEBUG:
@@ -662,7 +717,8 @@ class Router:
             for cp in connected + [pin]:
                 w = min(w, _pin_w(cp))
             w = round(max(0.2, w), 2)
-            path = self._route_pin_to_blob(ni, pin, blob, w)
+            direct = self._direct_pad_link(ni, pin, connected, w)
+            path = direct[0] if direct else self._route_pin_to_blob(ni, pin, blob, w)
             if path is None and w > 0.25:
                 w = 0.25
                 path = self._route_pin_to_blob(ni, pin, blob, w)
@@ -682,8 +738,8 @@ class Router:
                     blob[l, y, x] = True
                 connected.append(pin)
                 continue
-            end_pt = self._pad_center_at(ni, path[-1])
-            self._commit(ni, w, path, start_pt=pin.center, end_pt=end_pt)
+            end_pt = direct[1] if direct else self._pad_center_at(ni, path[-1])
+            self._commit(ni, w, path, start_pt=pin.center, end_pt=end_pt, straight=direct is not None)
             for l, y, x in path:
                 blob[l, y, x] = True
                 if self.is_via[y, x]:
@@ -701,25 +757,138 @@ class Router:
     def _pad_center_at(self, ni: int, cell):
         for key, cells in self.pad_cells.items():
             pr = self.pins[key]
-            if pr.net_idx == ni and cell in cells:
+            if pr.net_idx == ni and (cell in cells or cell in self._interior_cache[key]):
                 return pr.center
+        # A direct pad link need not lie on the routing grid. Branches must
+        # meet its actual centreline, not merely the rounded occupancy cell.
+        l, y, x = cell
+        point = (x * self.grid, y * self.grid)
+        for rec in self.routes.get(ni, []):
+            if not rec.grid_offset or cell not in rec.path:
+                continue
+            for tr in rec.traces:
+                if tr.layer != ("F.Cu" if l == 0 else "B.Cu"):
+                    continue
+                for a, b in zip(tr.points, tr.points[1:]):
+                    dx, dy = b[0] - a[0], b[1] - a[1]
+                    length2 = dx * dx + dy * dy
+                    t = max(0, min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2)) if length2 else 0
+                    projection = (a[0] + t * dx, a[1] + t * dy)
+                    if math.dist(point, projection) <= self.grid / math.sqrt(2) + 1e-6:
+                        return projection
+        return None
+
+    def _direct_pad_link(self, ni: int, pin: PinRef, connected: list[PinRef], w: float):
+        """Join aligned same-footprint pads without looping past their escapes.
+
+        Normal fine-pitch fan-out still uses A*. These short links are allowed
+        only when exact copper geometry and reserved neighbouring escapes are
+        clear, and do not create vias or change the track/clearance rules.
+        """
+        a = pin.center
+        targets = [p.center for p in connected if p.comp is pin.comp
+                   and (abs(a[0] - p.center[0]) < 1e-6 or abs(a[1] - p.center[1]) < 1e-6)]
+        for b in sorted(targets, key=lambda p: math.dist(a, p)):
+            if math.dist(a, b) < 1e-6:
+                continue
+            copper = Item('seg', self.nets[ni].name, 'F.Cu', 'pad link', (*a, *b), w / 2)
+            if any(it.layer == copper.layer and it.net != copper.net and distance(copper, it) < CLR - 1e-6
+                   for it in collect_items(self.b)):
+                continue
+            steps = max(1, int(math.ceil(math.dist(a, b) / (self.grid / 2))))
+            path = []
+            for k in range(steps + 1):
+                x, y = self._cell(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)
+                cell = (0, y, x)
+                if not path or path[-1] != cell:
+                    path.append(cell)
+            if any(not (0 <= y < self.ny and 0 <= x < self.nx) or self.hard[l, y, x]
+                   for l, y, x in path):
+                continue
+            # Future escapes are reserved copper even before their net routes.
+            ys, xs = np.nonzero(self.stub[0] & (self.owner[0] != ni + 1))
+            if any(distance(copper, Item('circle', '', 'F.Cu', '', (x * self.grid, y * self.grid), 0.1)) < CLR - 1e-6
+                   for y, x in zip(ys, xs)):
+                continue
+            return path, b
         return None
 
     def _route_pin_to_blob(self, ni: int, pin: PinRef, blob: np.ndarray, w: float, soft=False):
         hardb, softb, via_hard, via_soft = self._blocked_for(ni, w)
         starts = self.pad_cells[pin.key]
         target = blob.copy()
+        pad_block = self._pad_block_for(CLR + w / 2)
+        # A connected pad can be entered directly, not only through its fixed
+        # escape. Otherwise a branch doubles back along the pad's edge and can
+        # leave a narrow copper neck between that dogleg and the pad.
+        for key, cells in self.pad_cells.items():
+            pr = self.pins[key]
+            if key == pin.key or pr.net_idx != ni or not any(blob[cell] for cell in cells):
+                continue
+            for cell in self._interior_cache[key]:
+                if self.hard[cell] or pad_block[cell] not in (0, ni + 1):
+                    continue
+                target[cell] = True
+                hardb[cell] = False
+        # Near a connected via, terminate at the drill centre rather than an
+        # adjacent escape cell whose final pad stub can graze the annulus.
+        for via in self.b.vias:
+            if via.net != self.nets[ni].name:
+                continue
+            x, y = self._cell(via.x, via.y)
+            if not blob[:, y, x].any():
+                continue
+            near = (self.X - via.x) ** 2 + (self.Y - via.y) ** 2 <= (via.diameter / 2 + w / 2 + self.grid) ** 2
+            target[:, near] = False
+            target[:, y, x] = True
         for l, y, x in starts:
             target[l, y, x] = False
             hardb[l, y, x] = False
+        extra = self.under_body_l
+        if self.nets[ni].cls == 'power' and w < self.nets[ni].width:
+            wide_hard, wide_soft, _, _ = self._blocked_for(ni, self.nets[ni].width)
+            # Prefer a corridor that can carry the current-class width. A
+            # narrow fallback remains connected, but is explicitly audited.
+            extra = extra | wide_hard | wide_soft
         if soft:
             region = self._region(starts, target, 10000)
-            return self._astar(starts, target, hardb, ~via_hard, region, soft=softb, via_soft=via_soft, max_nodes=600000, extra=self.under_body_l)
+            return self._astar(starts, target, hardb, ~via_hard, region, soft=softb, via_soft=via_soft, max_nodes=600000, extra=extra)
         blocked = hardb | softb
         via_ok = ~(via_hard | via_soft)
+        if self.nets[ni].cls == 'power' and w < self.nets[ni].width:
+            from .power_routing import _pads, NECK_REACH, WIDTH_STEP
+
+            # Search for a full-width trunk first. The half-cell diagonal
+            # allowance protects the copper between adjacent grid centres.
+            trunk_width = self.nets[ni].width + math.sqrt(2) * self.grid
+            wide_hard, wide_soft, _, _ = self._blocked_for(ni, trunk_width)
+            # Own occupancy is not permission for wider copper to touch a
+            # neighbouring pad when leaving or joining an existing branch.
+            wide_pads = self._pad_block_for(CLR + trunk_width / 2)
+            wide_hard |= (wide_pads != 0) & (wide_pads != ni + 1)
+            neck = np.zeros_like(blocked)
+            neck_reach = max(0, NECK_REACH - WIDTH_STEP - self.grid / math.sqrt(2))
+            for (x0, y0, x1, y1), layer, _ in _pads(self.b, self.nets[ni]):
+                dx = np.maximum(np.maximum(x0 - self.X, self.X - x1), 0)
+                dy = np.maximum(np.maximum(y0 - self.Y, self.Y - y1), 0)
+                near = dx * dx + dy * dy <= neck_reach ** 2
+                neck[0] |= near
+                if layer == 'through':
+                    neck[1] |= near
+            wide_blocked = blocked | ((wide_hard | wide_soft) & ~neck)
+            wide_starts = [cell for cell in starts if not wide_blocked[cell]]
+            for margin in (int(math.ceil(10 / self.grid)), 10000):
+                if not wide_starts:
+                    break
+                region = self._region(starts, target, margin)
+                path = self._astar(wide_starts, target, wide_blocked, via_ok, region, extra=self.under_body_l, max_nodes=100000)
+                if path is not None:
+                    return path
+                if self.time_left() < 5:
+                    break
         for margin in (int(math.ceil(10 / self.grid)), 10000):
             region = self._region(starts, target, margin)
-            path = self._astar(starts, target, blocked, via_ok, region, extra=self.under_body_l)
+            path = self._astar(starts, target, blocked, via_ok, region, extra=extra)
             if path is not None:
                 return path
             if self.time_left() < 5:
@@ -925,7 +1094,7 @@ class Router:
 
     # ------------------------------------------------------------------ driver
     def route_all(self) -> dict:
-        """Keep the fast coarse solution; refine incomplete fine-pitch boards.
+        """Keep the fast coarse solution; refine incomplete or width-limited boards.
 
         Both passes share one time budget. Refinement is transactional: a worse
         candidate cannot replace the board or leave stale copper in the UI.
@@ -946,14 +1115,23 @@ class Router:
             result = self._route_all()
         finally:
             self.emit, self.time_budget = emit, budget
-        if (not result['failed'] and not result['orphan_gnd']) or self.time_left() < 10:
+        from .power_routing import width_summary
+
+        def power_limits(board):
+            return [width_summary(board, n) for n in board.nets if n.cls == 'power' and len(n.pins) >= 2]
+
+        if (not result['failed'] and not result['orphan_gnd']
+                and all(p['width_ok'] for p in power_limits(self.b))) or self.time_left() < 10:
             return result
 
         from .drc import run_drc
 
         def score(board, res):
-            errors = run_drc(board, res['failed'], res['orphan_gnd'])['errors']
-            return errors, len(res['failed']), res['orphan_gnd']
+            drc = run_drc(board, res['failed'], res['orphan_gnd'])
+            power = power_limits(board)
+            power_warnings = sum(not p['width_ok'] for p in power)
+            return (drc['errors'], len(res['failed']), res['orphan_gnd'], drc['warnings'] - power_warnings,
+                    power_warnings, sum(p['constrained_mm'] for p in power))
 
         baseline = score(self.b, result)
         board = self.b
@@ -988,6 +1166,18 @@ class Router:
         order.sort()
         total = len(order) + (1 if self.gnd_idx is not None else 0)
         routed = 0
+        # Allocate power trunks before movable signal and ground vias consume
+        # their escape corridors. Other nets' pad stubs remain hard obstacles.
+        for _, _, i in sorted((o for o in order if self.nets[o[2]].cls == 'power'),
+                              key=lambda o: (-self.nets[o[2]].width, o[1])):
+            if self.time_left() < 3:
+                self.failed.append(self.nets[i].name)
+                self.emit({"type": "route_fail", "net": self.nets[i].name, "reason": "time budget exhausted"})
+                continue
+            self.route_net(i)
+            routed += 1
+            self._progress(routed, total)
+        order = [o for o in order if self.nets[o[2]].cls != 'power']
         if self.gnd_idx is not None:
             gn = self.nets[self.gnd_idx]
             self.emit({"type": "route_begin", "net": gn.name, "cls": "gnd"})

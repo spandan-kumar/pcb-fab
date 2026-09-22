@@ -2,6 +2,8 @@
 import json
 import unittest
 
+import numpy as np
+
 from etch.catalog import Part
 from etch.drc import RULES, run_drc
 from etch.footprints import Footprint, Pad
@@ -68,6 +70,24 @@ class GroundRoutingTests(unittest.TestCase):
         self.assertTrue(hard[50, 56])
         self.assertFalse(hard[50, 58])
         self.assertTrue(router._blocked_for(1, 0.2)[2][50, 50])
+
+    def test_candidate_path_checks_spacing_between_its_new_vias(self):
+        router = Router(Board(10, 10), grid_pitch=0.2)
+        # A bottom-layer bridge is mandatory. Its first possible return via
+        # is only 0.4 mm from the entry hole; a legal return is 0.8 mm away.
+        blocked = np.ones_like(router.hard)
+        blocked[0, 25, 20] = False
+        blocked[1, 25, 20:25] = False
+        blocked[0, 25, 22:26] = False
+        via_ok = np.zeros_like(router.is_via)
+        via_ok[25, [20, 22, 24]] = True
+        target = np.zeros_like(blocked)
+        target[0, 25, 25] = True
+        path = router._astar([(0, 25, 20)], target, blocked, via_ok, (25, 25, 20, 25))
+        self.assertIsNotNone(path)
+        self.assertEqual([(y, x) for a, (l, y, x) in zip(path, path[1:]) if a[0] != l], [(25, 20), (25, 24)])
+        via_ok[25, 24] = False
+        self.assertIsNone(router._astar([(0, 25, 20)], target, blocked, via_ok, (25, 25, 20, 25)))
 
     def test_vias_respect_through_hole_drills(self):
         fp = Footprint('test', [Pad('1', 0, 0, 1.1, 1.1, 'circle', 'through', 0.8)], 1.1, 1.1, 1, 'header')

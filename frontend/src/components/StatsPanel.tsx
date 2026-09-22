@@ -123,12 +123,19 @@ export function StatsPanel() {
 
         {power && (
           <>
-            <div className="panel-title" style={{ borderTop: '1px solid var(--line)' }}>power rails · dc drop</div>
+            <div className="panel-title" style={{ borderTop: '1px solid var(--line)' }}>power rails · width / dc drop</div>
             <table className="rails">
-              <thead><tr><th>net</th><th>V</th><th>mA</th><th>len</th><th>mΩ</th><th>drop</th></tr></thead>
+              <thead><tr><th>net</th><th>V</th><th>mA</th><th title="Minimum / target trace width (mm)">width</th><th>mΩ</th><th>drop</th></tr></thead>
               <tbody>
                 {power.map(r => (
-                  <tr key={r.net}><td className="net">{r.net}</td><td>{fmt(r.voltage, 1)}</td><td>{fmtInt(r.current_ma)}</td><td>{fmt(r.length_mm, 0)}</td><td>{fmt(r.resistance_mohm, 1)}</td><td className={r.ok ? 'ok' : 'bad'} style={{ color: r.ok ? 'var(--green)' : 'var(--magenta)' }}>{fmt(r.drop_mv, 1)} mV</td></tr>
+                  <tr key={r.net}>
+                    <td className="net">{r.net}</td><td>{fmt(r.voltage, 1)}</td><td>{fmtInt(r.current_ma)}</td>
+                    <td style={{ color: r.width_ok === false ? 'var(--magenta)' : undefined }}
+                      title={r.width_ok == null ? 'Width target not checked in this recording' : `${fmt(r.constrained_mm ?? 0, 2)} mm below target outside pad escapes; ${fmt(r.neckdown_mm ?? 0, 2)} mm of pad neck-downs. Routing policy only, not a current-capacity certification.`}>
+                      {fmt(r.width_mm, 2)} / {r.target_width_mm == null ? '—' : fmt(r.target_width_mm, 2)}{r.width_ok === false ? ' !' : ''}
+                    </td>
+                    <td>{fmt(r.resistance_mohm, 1)}</td><td style={{ color: (r.drop_ok ?? r.ok) ? 'var(--green)' : 'var(--magenta)' }}>{fmt(r.drop_mv, 1)} mV</td>
+                  </tr>
                 ))}
               </tbody>
             </table>

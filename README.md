@@ -22,9 +22,9 @@ Gerbers + BOM + pick-and-place + KiCad project in a zip.
 | **Architect** | Claude reads the brief and designs the board from a curated catalog of ~110 real, LCSC-stocked parts (pinouts, footprints, design hints). Output is validated and repaired into a netlist. | Engineering reasoning streams live; component cards fly in. |
 | **Schematic** | ELK layered layout in the browser: ports on the right sides, orthogonal wires, power flags & GND bars like a real schematic. | Wires draw themselves; hover highlights a net (also in 3D). |
 | **Placement** | Simulated annealing with edge-constrained connectors, antenna keep-outs, courtyard repulsion. Six seeds anneal in parallel and get test-routed; the best wins. | Parts drop onto the board and settle. |
-| **Routing** | 2-layer 45° maze router: 0.2 mm grid with a bounded 0.1 mm refinement pass for incomplete fine-pitch boards, clearance-aware obstacles, escape stubs, multi-level rip-up & reroute, bottom GND pour with island healing. | Every trace draws in with a glowing routing head; routing retries reset the previous copper before replaying the selected result. |
+| **Routing** | 2-layer 45° maze router: 0.2 mm grid with bounded 0.1 mm refinement for incomplete or power-width-limited fine-pitch boards, clearance-aware obstacles, full-width power trunks with local pad neck-downs, multi-level rip-up & reroute, bottom GND pour with island healing. | Every trace draws at its actual width with a glowing routing head; routing retries reset the previous copper before replaying the selected result. |
 | **DRC** | Exact-geometry check against JLCPCB 2-layer rules: clearance, width, drill/annular ring, edge clearance, courtyards, connectivity. | Checklist + clickable violation markers on the board. |
-| **Thermal / Power / SPICE** | Steady-state heat solve, DC IR-drop per rail from the actual copper, and an **ngspice** transient of the regulated rail under a load step using the board's real decoupling. | Animated heatmap, rail table, oscilloscope-style chart. |
+| **Thermal / Power / SPICE** | Steady-state heat solve, power-width policy audit, approximate DC IR-drop per rail from the actual copper, and an **ngspice** transient of the regulated rail under a load step using the board's real decoupling. | Animated heatmap, minimum/target rail widths with constrained sections flagged separately from drop, oscilloscope-style chart. |
 | **Export** | RS-274X Gerbers (X2), Excellon drills, JLCPCB BOM & CPL, a KiCad 9/10 project — then an independent `kicad-cli pcb drc` and a KiCad 3D render of the same board. | Download buttons, "KiCad verified" badge, render thumbnail. |
 
 <p align="center">
@@ -76,12 +76,12 @@ These results are reproducible from `backend/tests/fixtures/router_boards.json`;
 
 | Example | Parts | Routed | ETCH DRC | KiCad 10 DRC |
 |---|---|---|---|---|
-| ESP32 environmental node | 33 | 100 % | 0 errors | PASS |
-| LiPo ESP32-C3 beacon | 38 | 100 % | 0 errors | PASS |
-| ESP32-S3 data logger | 35 | 100 % | 0 errors | PASS |
-| RS-485 industrial node | 42 | 100 % | 0 errors | PASS |
+| ESP32 environmental node | 33 | 100 % | 0 errors | PASS (0 warnings) |
+| LiPo ESP32-C3 beacon | 38 | 100 % | 0 errors | PASS (0 warnings) |
+| ESP32-S3 data logger | 35 | 100 % | 0 errors | PASS (0 warnings) |
+| RS-485 industrial node | 42 | 100 % | 0 errors | PASS (0 warnings) |
 | Dual-motor robot driver | 42 | 100 % | 0 errors | PASS (0 warnings) |
-| Arduino-style AVR board | 34 | 100 % | 0 errors | PASS |
+| Arduino-style AVR board | 34 | 100 % | 0 errors | PASS (0 warnings) |
 
 The AVR board previously left three nets unrouted; it now completes. The motor board now completes too, including
 the two ground connections that previously failed KiCad's independent check. The router retains a successful coarse route, retries incomplete
@@ -90,11 +90,22 @@ copper layer and clearance, and GND repair preserves shared stubs and recognizes
 Ground connectivity accounts for the zone's 0.25 mm minimum copper thickness; narrow necks that disappear during
 KiCad filling no longer count as connections. Repairs can use the existing 0.2 mm escape width when 0.3 mm will not fit.
 Existing vias are reused without duplicate drill holes, and the router and local DRC share KiCad's 0.5 mm hole-spacing rule.
+Aligned same-footprint pads join centre-to-centre where clearance permits; branches can enter connected pads directly,
+and junctions near vias target the via centre. These remove escape-loop and tangent-contact necks without adding copper patches.
 The 0.2 mm minimum track width and 0.18 mm routing clearance have not been relaxed.
 
-PASS means no KiCad errors or unconnected items, not zero warnings: four fixtures still have narrow copper-connection
-warnings (ENVNODE32: 1, C3BEACON: 2, S3LOGGER: 2, UNO328C: 2). ROBODRIVES3 and RS485NODE have none.
-No fixture has coincident/nearby-hole warnings. Inspect the exported KiCad report before fabrication. See [Limitations](#limitations).
+All six fixtures now have zero KiCad errors, warnings and unconnected items, including the seven previously reported
+narrow copper-connection warnings. All **18 power rails meet their current-class width targets**, resolving the nine
+previously constrained rails without changing placements or relaxing the pad-escape audit.
+Reproduce with `cd backend && uv run python -m tests.router_regression --strict-kicad --strict-power`.
+Power trunks route before movable signal/ground vias, widest targets first. The search tries full-width corridors
+before a narrow fallback, and exact-geometry widening reserves the expanded copper against later routes. Fine-grid
+retries can recover width-limited as well as disconnected nets, retaining the better result. Drill spacing also applies
+between new vias within a single candidate path. Clearance-mask expansion reuses horizontal spans of each disk instead
+of sweeping the board once per disk offset; this accelerates fine-grid routing without changing blocked cells or copper.
+Dense searches remain bounded by the same routing budget.
+This is a regression result, not a fabrication guarantee for new boards. Inspect every exported KiCad report before fabrication.
+See [Limitations](#limitations).
 
 ## How it works
 
@@ -116,6 +127,7 @@ backend/etch/
   agent.py llm.py    system prompt, streaming (Claude CLI / SDK / cache), JSON validation & repair → Board
   placement.py       simulated annealing, edge constraints, ratsnest
   router.py          grid maze router (A*, 8-dir, vias), escape stubs, rip-up/reroute, pour islands
+  power_routing.py   clearance-safe power widening and constrained-width audit
   drc.py             exact-geometry design rule check (JLCPCB 2-layer)
   analysis.py        thermal solve, IR drop, ngspice rail transient
   gerber.py          RS-274X + Excellon writer (incl. negative-plane GND pour), stroke-font silkscreen
@@ -128,17 +140,25 @@ frontend/src/        store.ts (reducer), three/ (board scene, effects), schemati
 
 ### Design rules used
 
-Trace 0.2–0.6 mm by net class, routing clearance 0.18 mm, vias 0.6/0.3 mm, copper-to-edge 0.5 mm, 1.6 mm FR-4,
+Trace minimum 0.2 mm; power targets 0.4 mm below 600 mA, 0.6 mm from 600 to below 1500 mA, and 1.0 mm at 1500 mA or more.
+Routing clearance 0.18 mm, vias 0.6/0.3 mm, routing centreline edge inset 0.5 mm (actual copper-edge DRC minimum 0.3 mm), 1.6 mm FR-4,
 1 oz copper. Checked against JLCPCB minimums (0.127 mm trace/clearance, 0.3 mm drill, 0.13 mm annular ring).
+Small-pad escapes may stay narrower within 1 mm of the pad's bounding rectangle on its copper layer. Any remaining
+below-target length is flagged in DRC, the power table and the exported README. These existing current-class targets
+are routing policy, not a current-capacity certification; minimum manufacturing rules have not been loosened.
 
 ## Limitations
 
 - **Dense layouts still need review.** USB-C, LQFP-48 and QFN 0.5 mm escape regressions pass, with 0.1 mm refinement
-  available when the coarse pass cannot finish. This is not a guarantee for arbitrary placements, smaller pitches or BGAs.
+  available when the coarse pass cannot finish or meet power-width targets. This is not a guarantee for arbitrary placements, smaller pitches or BGAs.
   Refinement uses more CPU/memory; local adaptive grids and staggered fan-out are still future work.
 - **Bounded repair.** Rip-up can recurse through three levels while protecting the nets being repaired. It remains
   time-limited and can leave congested nets or GND islands unresolved on other placements. The conservative pour model
   is not a substitute for KiCad's independent zone-fill/connectivity check.
+- **Power widths are best-effort.** A narrow connected fallback is retained when the target cannot fit, with an explicit
+  warning; the six bundled fixtures now meet their targets, but other layouts may not. The pad exception is a geometric
+  neighbourhood, not a strict neck-down path-length bound. Per-branch current, via ampacity and temperature rise are not
+  modelled; a low estimated voltage drop or a KiCad DRC pass does not establish safe current capacity.
 - **Footprints are parametric approximations** of the real packages — good enough for DRC-clean boards, but check the
   connector footprints against the manufacturer drawings before ordering.
 - **No schematic file.** The schematic is a browser view; the netlist is exported as JSON and inside the `.kicad_pcb`.
@@ -160,8 +180,9 @@ Without `VITE_BACKEND_URL` the UI uses its own origin (`/api`, `/ws`), which is 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Next priorities: remove narrow copper-connection warnings,
-add local fan-out/USB pair and power-width constraints, improve cap-to-IC adjacency, and display the actual exported Gerbers.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Next priorities: branch-current and via-capacity modelling,
+USB differential-pair constraints, faster local fan-out refinement,
+cap-to-IC adjacency, and displaying the actual exported Gerbers.
 
 ## License
 
