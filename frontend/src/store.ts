@@ -206,6 +206,9 @@ export const useStore = create<State>((set, get) => ({
         const tr: Trace = { net: ev.net, layer: ev.layer, width: ev.width, points: ev.points }
         enqueueTrace(tr)
         patch.traces = [...s.traces, tr]
+        // A rip-up can remove a net after its route_begin; the replacement
+        // trace is the authoritative signal that it is routed again.
+        if (!s.routedNets.includes(ev.net)) patch.routedNets = [...s.routedNets, ev.net]
         break
       }
       case 'via':

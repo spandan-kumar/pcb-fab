@@ -24,7 +24,7 @@ export function Landing() {
 
   useEffect(() => {
     fetch(api('/api/examples')).then(r => r.ok ? r.json() : Promise.reject()).then((ex: Example[]) => Array.isArray(ex) && ex.length && setExamples(ex)).catch(() => {})
-    fetch('/demo/index.json').then(r => r.ok ? r.json() : Promise.reject()).then((d: DemoRun[]) => Array.isArray(d) && setDemos(d)).catch(() => {})
+    fetch('/demo/index.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject()).then((d: DemoRun[]) => Array.isArray(d) && setDemos(d)).catch(() => {})
     fetch(api('/api/health')).then(r => r.ok ? r.json() : Promise.reject()).then(h => setHealth({ ok: true, ...h })).catch(() => setHealth({ ok: false }))
   }, [])
 

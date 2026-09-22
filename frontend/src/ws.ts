@@ -1,4 +1,4 @@
-import { WS_BASE, api } from './config'
+import { API_BASE, WS_BASE, api } from './config'
 import { useStore } from './store'
 import type { Event, MaskColor } from './protocol'
 import { generateMockRun } from './mock/mockRun'
@@ -90,11 +90,26 @@ export function playEvents(events: Event[], mode: 'replay' | 'mock') {
 export async function startReplay(runId: string) {
   const s = useStore.getState()
   try {
-    let r = await fetch(api(`/api/runs/${runId}/events.json`)).catch(() => null)
-    if (!r || !r.ok) r = await fetch(`/demo/${runId}/events.json`)
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    const events = (await r.json()) as Event[]
-    playEvents(events, 'replay')
+    // Recorded demos are bundled with the frontend; don't probe the backend
+    // first when the app is running without a configured engine.
+    const bundled = `/demo/${runId}/events.json`
+    const backend = api(`/api/runs/${runId}/events.json`)
+    const urls = API_BASE ? [backend, bundled] : [bundled, backend]
+    let error: unknown = new Error('network error')
+    for (const url of urls) {
+      try {
+        const r = await fetch(url)
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const events = (await r.json()) as Event[]
+        if (!Array.isArray(events)) throw new Error('Invalid replay data')
+        playEvents(events, 'replay')
+        return
+      } catch (e) {
+        // A missing static file can also return the SPA's HTML with HTTP 200.
+        error = e
+      }
+    }
+    throw error
   } catch (e) {
     s.setToast(`Could not load run ${runId}: ${(e as Error).message}`)
   }
