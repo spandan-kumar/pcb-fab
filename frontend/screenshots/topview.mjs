@@ -1,5 +1,6 @@
 import { chromium } from 'playwright'
-const rid = process.argv[2] ?? 'beb142f016'
+import { readFileSync } from 'node:fs'
+const rid = process.argv[2] ?? JSON.parse(readFileSync(new URL('../public/demo/index.json', import.meta.url), 'utf8'))[0].run_id
 const browser = await chromium.launch({ args: ['--use-angle=metal', '--ignore-gpu-blocklist'] })
 const page = await browser.newPage({ viewport: { width: 1500, height: 940 }, deviceScaleFactor: 2 })
 await page.goto(`http://localhost:5173/?replay=${rid}&speed=5&view=top`, { waitUntil: 'load' })

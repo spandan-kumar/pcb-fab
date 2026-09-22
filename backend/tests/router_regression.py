@@ -13,8 +13,7 @@ from pathlib import Path
 from etch.catalog import CATALOG
 from etch.drc import run_drc
 from etch.kicad_export import run_kicad_drc, write_kicad_pcb, write_kicad_pro
-from etch.model import Board, Component, Net
-from etch.pipeline import _keepouts
+from etch.model import Board, Component, Net, antenna_keepouts
 from etch.power_routing import width_summary
 from etch.router import Router
 
@@ -56,7 +55,7 @@ def main():
             # Keep files/reports available for inspection when a board fails.
             directory = Path(tempfile.mkdtemp(prefix='etch-router-regression-'))
             pcb = directory / f'{name}.kicad_pcb'
-            pcb.write_text(write_kicad_pcb(board, _keepouts(board)))
+            pcb.write_text(write_kicad_pcb(board, antenna_keepouts(board)))
             pcb.with_suffix('.kicad_pro').write_text(write_kicad_pro(board))
             kicad = run_kicad_drc(str(pcb)) or {'available': False}
             report.update(kicad=kicad, artifacts=str(directory))

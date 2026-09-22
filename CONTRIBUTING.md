@@ -14,6 +14,7 @@ Fast checks that don't need an LLM:
 ```bash
 cd backend
 uv run python -m unittest discover -s tests -p 'test_router_*.py' -v  # routing, power widths, junctions, ground repair and drill rules
+uv run python -m unittest tests.test_refresh_demos -v  # offline guards, saved designs and replay/export consistency
 uv run python -m tests.router_regression --strict-kicad --strict-power  # six fixed placements; zero KiCad errors/warnings/unconnected items and all power-width targets met
 uv run python -m tests.run_offline          # full pipeline with a canned agent answer (needs KiCad for the KiCad DRC step, otherwise skipped)
 uv run python -m tests.replay_run <run_id>  # re-place/route/DRC a stored run's design, renders /tmp/etch_<id>_<seed>.png
@@ -39,6 +40,30 @@ reserved escapes, holes/edges, layer-specific pad allowances, and low voltage dr
 including strict radius boundaries, board edges, narrow arrays, and protected/soft/via masks on both grids.
 Performance changes must preserve those masks. The regression report's `seconds` field measures routing (excluding
 KiCad export); compare runs on the same machine without concurrent CPU-heavy work.
+
+## Refreshing the four demos without API credits
+
+From `backend`, run `uv run python -m tests.refresh_demos --output /tmp/etch-demos-new` using a
+new, nonexistent output directory. KiCad and ngspice must be installed. The command reads the
+bundled packages' `design.json` and `netlist.json`, preserving components, full-precision placements,
+netlists and board text. It does not import or invoke the agent, re-place parts, or call any API.
+Python network connections and non-KiCad/ngspice subprocesses are blocked during the rebuild.
+
+Routing events, thermal/power/SPICE analyses, KiCad projects, both Gerber packages and top renders
+are regenerated together. Publication fails if copper events disagree with the final board, routing
+is incomplete, power-width/drop checks fail, either DRC reports warnings/errors, KiCad finds
+unconnected items, or an export is missing. Sources are untouched; the output manifest is written
+only after every board passes. `refresh.json` in each package records its source package hash, base Git
+commit and engine source hash (including any local engine changes).
+Pre-routing design/placement events are explicitly archived; replay time combines their old timestamps
+with measured rebuild time, not the duration of a new agent run.
+
+For frontend-only QA, build the frontend, copy the staged bundle into `frontend/dist/demo/`, then
+run `pnpm preview --host 127.0.0.1` and `node screenshots/demo-replay.mjs http://127.0.0.1:4173`
+from `frontend`. The check blocks backend requests and exercises all four cards, width results,
+renders and both download buttons. After QA, replace the corresponding `frontend/public/demo/`
+bundle and rebuild. New replay IDs prevent old cached events, renders and ZIPs from mixing with
+new exports; old recordings remain available in Git history. Never publish a partial output directory.
 
 ## Where things live
 

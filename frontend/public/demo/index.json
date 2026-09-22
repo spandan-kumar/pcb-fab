@@ -1,74 +1,142 @@
 [
- {
-  "run_id": "beb142f016",
-  "name": "ENVNODE32",
-  "tagline": "USB-C ESP32 Wi-Fi node with SHT31 + BME280 and Qwiic expansion",
-  "prompt": "A USB-C powered ESP32 environmental sensor node with an SHT31 temperature/humidity sensor, a BME280 pressure sensor, a status RGB LED (WS2812B), boot/reset buttons, and a Qwiic connector for expansion. Push data over Wi-Fi.",
-  "stats": {
-   "components": 29,
-   "nets": 17,
-   "traces": 110,
-   "vias": 57,
-   "total_trace_mm": 638.0,
-   "routed_pct": 100.0,
-   "drc_errors": 0,
-   "ripups": 1,
-   "elapsed_s": 29.0,
-   "kicad_drc_passed": true
+  {
+    "run_id": "7799c50aaf",
+    "name": "ENVNODE32",
+    "tagline": "USB-C ESP32 Wi-Fi node with SHT31 + BME280 and Qwiic expansion",
+    "prompt": "A USB-C powered ESP32 environmental sensor node with an SHT31 temperature/humidity sensor, a BME280 pressure sensor, a status RGB LED (WS2812B), boot/reset buttons, and a Qwiic connector for expansion. Push data over Wi-Fi.",
+    "stats": {
+      "components": 29,
+      "nets": 17,
+      "traces": 142,
+      "vias": 66,
+      "total_trace_mm": 646.1,
+      "routed_pct": 100.0,
+      "drc_errors": 0,
+      "ripups": 2,
+      "power_width_warnings": 0,
+      "elapsed_s": 63.6,
+      "kicad_drc_passed": true
+    },
+    "refresh": {
+      "mode": "offline-refresh",
+      "source_run_id": "beb142f016",
+      "source_package_sha256": "f2484957dd143d588295da70471d45fc7688ed5a486246581d9680b879b22693",
+      "engine_base_commit": "41780ce195c82d0794b668b2ad3006a5f8c326a1",
+      "engine_sources_sha256": "563bf50f2fed47886c153f5075550feaba0fbae3a18278f08488358018bc2842",
+      "refreshed_at": "2026-09-22T14:05:45.430990+00:00",
+      "agent_calls": 0,
+      "preserved": [
+        "design",
+        "components",
+        "netlist",
+        "placements"
+      ],
+      "timing": "Archived pre-routing timeline followed by measured local rebuild time."
+    }
+  },
+  {
+    "run_id": "a48e76cf41",
+    "name": "C3BEACON",
+    "tagline": "LiPo-powered ESP32-C3 motion-wake BLE beacon",
+    "prompt": "A battery powered ESP32-C3 beacon: LiPo battery on JST-PH with TP4056 USB-C charging, a 3.3V LDO, a tactile button, one status LED, and an I2C accelerometer (MPU-6050) to wake on motion. Small board.",
+    "stats": {
+      "components": 34,
+      "nets": 22,
+      "traces": 129,
+      "vias": 57,
+      "total_trace_mm": 525.4,
+      "routed_pct": 100.0,
+      "drc_errors": 0,
+      "ripups": 4,
+      "power_width_warnings": 0,
+      "elapsed_s": 60.1,
+      "kicad_drc_passed": true
+    },
+    "refresh": {
+      "mode": "offline-refresh",
+      "source_run_id": "a8ece322b5",
+      "source_package_sha256": "5dc7f5a199716aa3ab5973459567559c9609db1aa047d00a212ea1279a68a14b",
+      "engine_base_commit": "41780ce195c82d0794b668b2ad3006a5f8c326a1",
+      "engine_sources_sha256": "563bf50f2fed47886c153f5075550feaba0fbae3a18278f08488358018bc2842",
+      "refreshed_at": "2026-09-22T14:06:30.468310+00:00",
+      "agent_calls": 0,
+      "preserved": [
+        "design",
+        "components",
+        "netlist",
+        "placements"
+      ],
+      "timing": "Archived pre-routing timeline followed by measured local rebuild time."
+    }
+  },
+  {
+    "run_id": "de2ae7d779",
+    "name": "S3LOGGER",
+    "tagline": "ESP32-S3 data logger with microSD, RTC backup and 16-bit ADC input",
+    "prompt": "An ESP32-S3 data logger with a microSD slot over SPI, a DS3231 RTC with CR2032 backup, an ADS1115 16-bit ADC on a screw terminal input, native USB-C for power and programming, boot/reset buttons, and a user LED. 3.3V system.",
+    "stats": {
+      "components": 31,
+      "nets": 22,
+      "traces": 139,
+      "vias": 81,
+      "total_trace_mm": 612.2,
+      "routed_pct": 100.0,
+      "drc_errors": 0,
+      "ripups": 4,
+      "power_width_warnings": 0,
+      "elapsed_s": 48.1,
+      "kicad_drc_passed": true
+    },
+    "refresh": {
+      "mode": "offline-refresh",
+      "source_run_id": "fd5e3a3415",
+      "source_package_sha256": "76307e2c1783022a78ad351ad9ea524304ef0e4f4fe60624eff4f9d18b26f66a",
+      "engine_base_commit": "41780ce195c82d0794b668b2ad3006a5f8c326a1",
+      "engine_sources_sha256": "563bf50f2fed47886c153f5075550feaba0fbae3a18278f08488358018bc2842",
+      "refreshed_at": "2026-09-22T14:07:06.052619+00:00",
+      "agent_calls": 0,
+      "preserved": [
+        "design",
+        "components",
+        "netlist",
+        "placements"
+      ],
+      "timing": "Archived pre-routing timeline followed by measured local rebuild time."
+    }
+  },
+  {
+    "run_id": "2157532055",
+    "name": "RS485NODE",
+    "tagline": "ESP32 RS-485 sensor node with relay output and DS18B20 probe, 12 V powered",
+    "prompt": "An industrial RS-485 sensor node: ESP32-WROOM-32E, MAX485 transceiver on a 3-pin screw terminal, 12V input via barrel jack with MP1584 buck to 5V and AP2112K to 3.3V, a relay output (SRD-05VDC driven by AO3400 MOSFET with flyback diode) on a screw terminal, DS18B20 temperature probe header, and status LEDs.",
+    "stats": {
+      "components": 38,
+      "nets": 31,
+      "traces": 143,
+      "vias": 63,
+      "total_trace_mm": 672.7,
+      "routed_pct": 100.0,
+      "drc_errors": 0,
+      "ripups": 2,
+      "power_width_warnings": 0,
+      "elapsed_s": 42.0,
+      "kicad_drc_passed": true
+    },
+    "refresh": {
+      "mode": "offline-refresh",
+      "source_run_id": "96ea4db355",
+      "source_package_sha256": "9253c4b2bf84f21c67f8ecdb2f64fda45b0ab6431b4e3132428c3a2a13bbfe40",
+      "engine_base_commit": "41780ce195c82d0794b668b2ad3006a5f8c326a1",
+      "engine_sources_sha256": "563bf50f2fed47886c153f5075550feaba0fbae3a18278f08488358018bc2842",
+      "refreshed_at": "2026-09-22T14:07:27.756494+00:00",
+      "agent_calls": 0,
+      "preserved": [
+        "design",
+        "components",
+        "netlist",
+        "placements"
+      ],
+      "timing": "Archived pre-routing timeline followed by measured local rebuild time."
+    }
   }
- },
- {
-  "run_id": "a8ece322b5",
-  "name": "C3BEACON",
-  "tagline": "LiPo-powered ESP32-C3 motion-wake BLE beacon",
-  "prompt": "A battery powered ESP32-C3 beacon: LiPo battery on JST-PH with TP4056 USB-C charging, a 3.3V LDO, a tactile button, one status LED, and an I2C accelerometer (MPU-6050) to wake on motion. Small board.",
-  "stats": {
-   "components": 34,
-   "nets": 22,
-   "traces": 116,
-   "vias": 62,
-   "total_trace_mm": 492.9,
-   "routed_pct": 100.0,
-   "drc_errors": 0,
-   "ripups": 6,
-   "elapsed_s": 32.8,
-   "kicad_drc_passed": true
-  }
- },
- {
-  "run_id": "fd5e3a3415",
-  "name": "S3LOGGER",
-  "tagline": "ESP32-S3 data logger with microSD, RTC backup and 16-bit ADC input",
-  "prompt": "An ESP32-S3 data logger with a microSD slot over SPI, a DS3231 RTC with CR2032 backup, an ADS1115 16-bit ADC on a screw terminal input, native USB-C for power and programming, boot/reset buttons, and a user LED. 3.3V system.",
-  "stats": {
-   "components": 31,
-   "nets": 22,
-   "traces": 125,
-   "vias": 70,
-   "total_trace_mm": 628.6,
-   "routed_pct": 100.0,
-   "drc_errors": 0,
-   "ripups": 3,
-   "elapsed_s": 35.7,
-   "kicad_drc_passed": true
-  }
- },
- {
-  "run_id": "96ea4db355",
-  "name": "RS485NODE",
-  "tagline": "ESP32 RS-485 sensor node with relay output and DS18B20 probe, 12 V powered",
-  "prompt": "An industrial RS-485 sensor node: ESP32-WROOM-32E, MAX485 transceiver on a 3-pin screw terminal, 12V input via barrel jack with MP1584 buck to 5V and AP2112K to 3.3V, a relay output (SRD-05VDC driven by AO3400 MOSFET with flyback diode) on a screw terminal, DS18B20 temperature probe header, and status LEDs.",
-  "stats": {
-   "components": 38,
-   "nets": 31,
-   "traces": 119,
-   "vias": 56,
-   "total_trace_mm": 682.0,
-   "routed_pct": 100.0,
-   "drc_errors": 0,
-   "ripups": 0,
-   "elapsed_s": 33.6,
-   "kicad_drc_passed": true
-  }
- }
 ]

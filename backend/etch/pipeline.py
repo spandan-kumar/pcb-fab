@@ -15,7 +15,7 @@ from .analysis import ngspice_available, power_rails, spice_rail_step, thermal
 from .drc import run_drc
 from .exporter import export_all
 from .kicad_export import kicad_cli
-from .model import Board
+from .model import Board, antenna_keepouts as _keepouts
 from .placement import Placer, ratsnest
 from .router import Router
 
@@ -243,18 +243,3 @@ def _trial(board: Board, seed: int) -> dict:
     return {"seed": seed, "failed": len(res["failed"]), "orphans": res["orphan_gnd"], "ripups": res["ripups"],
             "length_mm": res["length_mm"], "vias": res["vias"], "frames": frames,
             "positions": {c.ref: (c.x, c.y, c.rot) for c in board.components}}
-
-
-def _keepouts(board: Board):
-    from .footprints import ANT_H
-    from .model import rotate
-    out = []
-    for c in board.components:
-        fp = c.footprint
-        if fp.style == "module" and fp.edge == "+y":
-            ax0, ay0 = rotate(-fp.body_w / 2, fp.body_h / 2 - ANT_H, c.rot)
-            ax1, ay1 = rotate(fp.body_w / 2, fp.body_h / 2, c.rot)
-            x0, x1 = sorted([c.x + ax0, c.x + ax1])
-            y0, y1 = sorted([c.y + ay0, c.y + ay1])
-            out.append((max(0, x0), max(0, y0), min(board.width, x1), min(board.height, y1)))
-    return out

@@ -117,6 +117,10 @@ Pad coordinates are relative to the footprint origin, unrotated. Footprint place
 ```
 A net may produce several `trace` events (one per constant-width polyline run per layer). Power paths can change width near pads or obstacles; render each event's actual `width`, not a single net-wide width. The bottom layer is a GND pour: render B.Cu as solid copper with a `clearance`-wide gap around non-GND B.Cu traces, vias and through-pads.
 
+`route_begin` starts or retries a net and clears its previous failure marker; a new failure must emit
+`route_fail` again. This also applies to every GND-stub retry, including repairs after another net's rip-up.
+It does not remove existing copper or certify that all pads on the net are connected.
+
 `ripup` removes a net's previous copper. `reset_routing` clears all routing geometry, failures and pour state before
 a refinement attempt or restoration of the better result; subsequent events rebuild it. The final `routing_progress`
 counts successfully routed nets, excluding unresolved nets and an isolated GND plane. A completed routing stage does

@@ -1,6 +1,7 @@
 """Ground repair and manufacturing-rule regressions; no external tools needed."""
 import json
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -13,6 +14,28 @@ from etch.router import Router
 
 
 class GroundRoutingTests(unittest.TestCase):
+    def test_ground_retries_reset_stale_ui_failures_without_hiding_new_failures(self):
+        fp = Footprint('test', [Pad('1', 0, 0, 1, 1)], 1, 1, 1, 'header')
+        board = Board(10, 10)
+        board.components = [Component('J1', Part('test', 'Test', 'connector', '', fp, []), x=5, y=5)]
+        board.nets = [Net('GND', [('J1', '1')], 'gnd')]
+        events = []
+        router = Router(board, events.append)
+
+        def fail(pin, **kwargs):
+            router.failed.append('GND')
+            router.emit({'type': 'route_fail', 'net': 'GND', 'reason': 'blocked'})
+
+        with patch.object(router, 'route_gnd_stub', side_effect=fail):
+            router._route_all_gnd_stubs()
+        self.assertEqual([e['type'] for e in events], ['route_begin', 'route_fail'])
+        self.assertEqual(router.failed, ['GND'])
+        events.clear()
+        with patch.object(router, 'route_gnd_stub', return_value=True):
+            router._route_all_gnd_stubs()
+        self.assertEqual(events, [{'type': 'route_begin', 'net': 'GND', 'cls': 'gnd'}])
+        self.assertEqual(router.failed, [])
+
     def test_pour_necks_below_exported_minimum_are_not_connections(self):
         board = Board(10, 10)
         board.nets = [Net('GND', [], 'gnd'), Net('OTHER', [])]

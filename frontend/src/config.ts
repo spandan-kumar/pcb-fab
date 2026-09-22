@@ -2,4 +2,5 @@
 const raw = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 export const API_BASE = raw
 export const WS_BASE = raw ? raw.replace(/^http/, 'ws') : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
-export const api = (path: string) => `${API_BASE}${path}`
+// Bundled replay downloads belong to the frontend, even with a remote engine.
+export const api = (path: string) => path.startsWith('/demo/') ? path : `${API_BASE}${path}`

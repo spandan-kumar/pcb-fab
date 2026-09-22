@@ -959,6 +959,9 @@ class Router:
 
     def _route_all_gnd_stubs(self, allow_ripup=True):
         gn = self.nets[self.gnd_idx]
+        # Ground retries need the same failure-reset event as signal retries.
+        # Otherwise a repaired stub leaves stale airwires/unrouted badges in UI.
+        self.emit({"type": "route_begin", "net": gn.name, "cls": "gnd"})
         self.failed = [n for n in self.failed if n != gn.name]
         pins = [self.pins[k] for k in gn.pins if k in self.pins]
         pins.sort(key=lambda p: p.min_dim)  # fine-pitch pins first: least freedom
@@ -1179,8 +1182,6 @@ class Router:
             self._progress(routed, total)
         order = [o for o in order if self.nets[o[2]].cls != 'power']
         if self.gnd_idx is not None:
-            gn = self.nets[self.gnd_idx]
-            self.emit({"type": "route_begin", "net": gn.name, "cls": "gnd"})
             self._route_all_gnd_stubs()
             routed += 1
             self._progress(routed, total)

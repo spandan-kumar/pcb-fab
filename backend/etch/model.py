@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .catalog import Part, CATALOG
-from .footprints import Footprint, Pad
+from .footprints import ANT_H, Footprint, Pad
 
 
 @dataclass
@@ -175,3 +175,17 @@ def rotate(x: float, y: float, rot: int) -> tuple[float, float]:
     if rot == 180:
         return -x, -y
     return y, -x
+
+
+def antenna_keepouts(board: Board):
+    """Copper keepouts shared by live and offline exports."""
+    out = []
+    for c in board.components:
+        fp = c.footprint
+        if fp.style == "module" and fp.edge == "+y":
+            ax0, ay0 = rotate(-fp.body_w / 2, fp.body_h / 2 - ANT_H, c.rot)
+            ax1, ay1 = rotate(fp.body_w / 2, fp.body_h / 2, c.rot)
+            x0, x1 = sorted([c.x + ax0, c.x + ax1])
+            y0, y1 = sorted([c.y + ay0, c.y + ay1])
+            out.append((max(0, x0), max(0, y0), min(board.width, x1), min(board.height, y1)))
+    return out
