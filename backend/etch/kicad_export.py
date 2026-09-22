@@ -8,6 +8,7 @@ import subprocess
 import uuid
 
 from .model import Board
+from .drc import RULES
 
 KICAD_CLI_CANDIDATES = [
     shutil.which("kicad-cli") or "",
@@ -132,7 +133,7 @@ def write_kicad_pcb(board: Board, keepouts: list[tuple[float, float, float, floa
     if board.pour_net in net_ids:
         zpts = [(0.3, 0.3), (board.width - 0.3, 0.3), (board.width - 0.3, board.height - 0.3), (0.3, board.height - 0.3)]
         out.append(f'  (zone\n    (net {net_ids[board.pour_net]})\n    (net_name "{board.pour_net}")\n    (layer "B.Cu")\n    (uuid "{_u()}")\n    (hatch edge 0.5)\n'
-                   f'    (priority 0)\n    (connect_pads (clearance {_f(board.pour_clearance)}))\n    (min_thickness 0.25)\n    (filled_areas_thickness no)\n'
+                   f'    (priority 0)\n    (connect_pads (clearance {_f(board.pour_clearance)}))\n    (min_thickness {_f(board.pour_min_thickness)})\n    (filled_areas_thickness no)\n'
                    f'    (fill yes\n      (thermal_gap 0.3)\n      (thermal_bridge_width 0.4)\n    )\n    (polygon\n      (pts\n' +
                    "\n".join(f"        (xy {_f(x)} {Y(y)})" for x, y in zpts) + "\n      )\n    )\n  )")
     for (x0, y0, x1, y1) in keepouts or []:
@@ -161,7 +162,7 @@ def write_kicad_pro(board: Board) -> str:
                     "extra_footprint": "ignore", "missing_footprint": "ignore", "net_conflict": "ignore", "annular_width": "error",
                 },
                 "rules": {
-                    "min_clearance": 0.127, "min_connection": 0.127, "min_copper_edge_clearance": 0.25, "min_hole_clearance": 0.25, "min_hole_to_hole": 0.5,
+                    "min_clearance": 0.127, "min_connection": 0.127, "min_copper_edge_clearance": 0.25, "min_hole_clearance": 0.25, "min_hole_to_hole": RULES['hole_to_hole_mm'],
                     "min_microvia_diameter": 0.2, "min_microvia_drill": 0.1, "min_resolved_spokes": 1, "min_silk_clearance": 0.0, "min_text_height": 0.5,
                     "min_text_thickness": 0.08, "min_through_hole_diameter": 0.3, "min_track_width": 0.127, "min_via_annular_width": 0.13,
                     "min_via_diameter": 0.5, "solder_mask_to_copper_clearance": 0.0, "use_height_for_length_calcs": True,

@@ -119,6 +119,7 @@ class Board:
     texts: list[dict] = field(default_factory=list)
     pour_net: str = "GND"
     pour_clearance: float = 0.3
+    pour_min_thickness: float = 0.25
 
     def comp(self, ref: str) -> Optional[Component]:
         for c in self.components:

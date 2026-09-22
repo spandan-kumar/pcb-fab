@@ -8,15 +8,17 @@ from __future__ import annotations
 import heapq
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Optional
 
 import numpy as np
 
 from .footprints import ANT_H
+from .drc import RULES
 from .model import Board, Component, Trace, Via, rotate
 
-G = 0.2  # grid pitch mm
+G = 0.2  # default grid pitch mm
+FINE_G = 0.1
 CLR = 0.18  # routing clearance mm (JLCPCB min 0.127)
 EDGE_CLR = 0.5
 VIA_DIA, VIA_DRILL = 0.6, 0.3
@@ -85,11 +87,23 @@ class RouteRec:
 
 
 class Router:
-    def __init__(self, board: Board, on_event: Callable[[dict], None] | None = None, time_budget: float = 240.0):
+    def __init__(self, board: Board, on_event: Callable[[dict], None] | None = None, time_budget: float = 240.0,
+                 grid_pitch: float | None = None):
         self.b = board
+        # Half-millimetre pad rows need a grid that preserves their escape lanes.
+        fine_pitch = any(
+            math.dist((p.x, p.y), (q.x, q.y)) <= 0.5 + 1e-6
+            for c in board.components
+            for i, p in enumerate(c.footprint.pads) if p.layer != "through"
+            for q in c.footprint.pads[i + 1:] if q.layer != "through"
+        )
+        self._refine = grid_pitch is None and fine_pitch
+        self.grid = grid_pitch if grid_pitch is not None else G
+        if not math.isfinite(self.grid) or self.grid <= 0:
+            raise ValueError("grid_pitch must be positive and finite")
         self.emit = on_event or (lambda e: None)
-        self.nx = int(math.ceil(board.width / G)) + 1
-        self.ny = int(math.ceil(board.height / G)) + 1
+        self.nx = int(math.ceil(board.width / self.grid)) + 1
+        self.ny = int(math.ceil(board.height / self.grid)) + 1
         self.NL = self.ny * self.nx
         self.owner = np.zeros((2, self.ny, self.nx), dtype=np.int32)  # 0 free, -1 hard, k = net idx+1
         self.radius = np.zeros((2, self.ny, self.nx), dtype=np.float32)  # half-width of copper at cell (0 for pads)
@@ -104,20 +118,23 @@ class Router:
         self.pad_cells: dict[tuple[str, str], list[tuple[int, int, int]]] = {}  # routing start/target cells
         self.pin_marked: dict[tuple[str, str], list[tuple[int, int, int]]] = {}  # all cells owned because of the pin
         self.routes: dict[int, list[RouteRec]] = {}
+        self._connected_nets: set[int] = set()
+        self._active_nets: set[int] = set()
         self.failed: list[str] = []
         self.ripups = 0
         self.pour_cells: Optional[np.ndarray] = None
+        self._interior_cache: dict = {}
         self._build_static()
 
     # ------------------------------------------------------------------ static obstacles
     def _cell(self, x: float, y: float) -> tuple[int, int]:
-        return int(round(x / G)), int(round(y / G))
+        return int(round(x / self.grid)), int(round(y / self.grid))
 
     def _build_static(self):
         b = self.b
         ny, nx = self.ny, self.nx
-        xs = np.arange(nx) * G
-        ys = np.arange(ny) * G
+        xs = np.arange(nx) * self.grid
+        ys = np.arange(ny) * self.grid
         X, Y = np.meshgrid(xs, ys)
         edge = (X < EDGE_CLR) | (X > b.width - EDGE_CLR) | (Y < EDGE_CLR) | (Y > b.height - EDGE_CLR)
         r = b.corner_radius + EDGE_CLR
@@ -163,9 +180,14 @@ class Router:
         self.under_body_l[0] = self.under_body
         self.owner[self.hard] = -1
         self.X, self.Y = X, Y
+        self.via_drill_block = np.zeros((ny, nx), dtype=bool)
         pseudo = len(self.nets)
         for c in b.components:
             for p in c.footprint.pads:
+                if p.layer == "through":
+                    cx, cy, _, _ = c.pad_abs(p)
+                    gap = (p.drill + VIA_DRILL) / 2 + RULES['hole_to_hole_mm']
+                    self.via_drill_block |= (X - cx) ** 2 + (Y - cy) ** 2 < (gap - 1e-6) ** 2
                 if not p.plated and p.layer == "through":
                     continue  # NPTH mounting hole handled as hole
                 net = b.net_of(c.ref, p.num)
@@ -209,12 +231,10 @@ class Router:
                         self.radius[l, y, x] = max(self.radius[l, y, x], np.float32(0.1))
                         self.stub[l, y, x] = True
 
-    _interior_cache: dict = {}
-
     def _pad_cells(self, pr: PinRef) -> list[tuple[int, int, int]]:
         x0, y0, x1, y1 = pr.rect
-        i0, i1 = int(math.ceil((x0 + 1e-6) / G)), int(math.floor((x1 - 1e-6) / G))
-        j0, j1 = int(math.ceil((y0 + 1e-6) / G)), int(math.floor((y1 - 1e-6) / G))
+        i0, i1 = int(math.ceil((x0 + 1e-6) / self.grid)), int(math.floor((x1 - 1e-6) / self.grid))
+        j0, j1 = int(math.ceil((y0 + 1e-6) / self.grid)), int(math.floor((y1 - 1e-6) / self.grid))
         cells = []
         for l in pr.layers:
             for j in range(max(j0, 0), min(j1, self.ny - 1) + 1):
@@ -267,10 +287,10 @@ class Router:
         out = np.zeros((2, self.ny, self.nx), dtype=np.int32)
         X, Y = self.X, self.Y
         for ni, layers, x0, y0, x1, y1 in self.pad_rects:
-            i0 = max(0, int(math.floor((x0 - e) / G)))
-            i1 = min(self.nx - 1, int(math.ceil((x1 + e) / G)))
-            j0 = max(0, int(math.floor((y0 - e) / G)))
-            j1 = min(self.ny - 1, int(math.ceil((y1 + e) / G)))
+            i0 = max(0, int(math.floor((x0 - e) / self.grid)))
+            i1 = min(self.nx - 1, int(math.ceil((x1 + e) / self.grid)))
+            j0 = max(0, int(math.floor((y0 - e) / self.grid)))
+            j1 = min(self.ny - 1, int(math.ceil((y1 + e) / self.grid)))
             if i1 < i0 or j1 < j0:
                 continue
             sx = X[j0:j1 + 1, i0:i1 + 1]
@@ -302,20 +322,30 @@ class Router:
         via_hard = self.hard[0] | self.hard[1] | ((pbv[0] != 0) & (pbv[0] != own)) | ((pbv[1] != 0) & (pbv[1] != own))
         pbo = self._pad_block_for(VIA_DIA / 2 + 0.05)
         via_hard |= (pbo[0] != 0) | (pbo[1] != 0)  # no via-in-pad, even own net
+        # Drill spacing applies even to vias on the same net. Reusing an
+        # existing own-net via is legal; adding a second nearby hole is not.
+        drill_block = dilate(self.is_via, (VIA_DRILL + RULES['hole_to_hole_mm'] - 1e-6) / self.grid)
+        own_via = self.is_via & (self.owner[0] == own) & (self.owner[1] == own)
+        via_hard |= self.via_drill_block | (drill_block & ~own_via)
         # escape stubs of other nets are as hard as pads
         stub_other = other & self.stub
         if stub_other.any():
             for l in range(2):
-                hardb[l] |= dilate(stub_other[l], (w / 2 + CLR + 0.1) / G)
-            via_hard |= dilate(stub_other[0] | stub_other[1], (VIA_DIA / 2 + CLR + 0.1) / G)
+                hardb[l] |= dilate(stub_other[l], (w / 2 + CLR + 0.1) / self.grid)
+            via_hard |= dilate(stub_other[0] | stub_other[1], (VIA_DIA / 2 + CLR + 0.1) / self.grid)
         trace_other = other & ~self.stub
         radii = [float(r) for r in np.unique(self.radius[trace_other])] if trace_other.any() else []
         for r_obs in radii:
             tier = trace_other & (self.radius == np.float32(r_obs))
-            R = (w / 2 + CLR + r_obs) / G
+            R = (w / 2 + CLR + r_obs) / self.grid
             for l in range(2):
                 softb[l] |= dilate(tier[l], R)
-            via_soft |= dilate(tier[0] | tier[1], (VIA_DIA / 2 + CLR + r_obs) / G)
+            via_soft |= dilate(tier[0] | tier[1], (VIA_DIA / 2 + CLR + r_obs) / self.grid)
+            # A nested reroute cannot undo the route whose conflict it is fixing.
+            protected = tier & np.isin(self.owner, [n + 1 for n in self._active_nets if n != ni])
+            for l in range(2):
+                hardb[l] |= dilate(protected[l], R)
+            via_hard |= dilate(protected[0] | protected[1], (VIA_DIA / 2 + CLR + r_obs) / self.grid)
         ownmask = self.owner == own
         hardb &= ~ownmask
         softb &= ~ownmask
@@ -326,6 +356,10 @@ class Router:
     def _astar(self, starts, target, blocked, via_ok, region, goal_bottom=False, via_cost=14.0, layer_mult=(1.0, 1.35),
                turn_pen=0.6, hweight=1.2, max_nodes=400000, soft=None, via_soft=None, soft_pen=30.0, extra=None, extra_pen=float(os.environ.get("ETCH_BODY_PEN", "1.5"))):
         nx, NL = self.nx, self.NL
+        # Costs expressed as detour distances must not change when refining the
+        # grid; otherwise fine routing overuses vias and congests both layers.
+        via_cost *= G / self.grid
+        turn_pen *= G / self.grid
         y0, y1, x0, x1 = region
         blk = blocked.ravel().tolist()
         sft = soft.ravel().tolist() if soft is not None else None
@@ -365,6 +399,8 @@ class Router:
             n += 1
             if n > max_nodes:
                 return None
+            if n % 1024 == 0 and self.time_left() <= 0:
+                return None
             l, rem = divmod(idx, NL)
             y, x = divmod(rem, nx)
             if goal_bottom:
@@ -395,8 +431,8 @@ class Router:
                     pdir[nidx] = d
                     heapq.heappush(open_, (ng + h(nxp, nyp), ng, nidx))
             vi = y * nx + x
-            soft_via = vsft is not None and not vok[vi] and vsft[vi]
-            if vok[vi] or soft_via:
+            soft_via = vsft is not None and vsft[vi]
+            if vok[vi]:
                 ol = 1 - l
                 nidx = ol * NL + vi
                 if nidx not in closed and not blk[nidx]:
@@ -429,7 +465,7 @@ class Router:
         run_layer = path[0][0]
         first = True
         for k, (l, y, x) in enumerate(path):
-            px, py = x * G, y * G
+            px, py = x * self.grid, y * self.grid
             if k > 0 and l != path[k - 1][0]:
                 for ll in range(2):
                     o = int(self.owner[ll, y, x])
@@ -437,7 +473,12 @@ class Router:
                         import traceback
                         print(f"!! via of net {net} placed on cell owned by net {o - 1} ({self.nets[o - 1].name if o - 1 < len(self.nets) else 'pseudo'}) layer {ll} at {px},{py} r={self.radius[ll, y, x]} stub={self.stub[ll, y, x]}")
                         traceback.print_stack(limit=4)
-                vias.append(Via(net, px, py, VIA_DRILL, VIA_DIA))
+                via = next((v for v in self.b.vias + vias
+                            if v.net == net and abs(v.x - px) < 1e-6 and abs(v.y - py) < 1e-6), None)
+                if via is None:
+                    via = Via(net, px, py, VIA_DRILL, VIA_DIA)
+                if via not in vias:
+                    vias.append(via)
                 self.is_via[y, x] = True
                 for ll in range(2):
                     self.owner[ll, y, x] = own
@@ -469,8 +510,9 @@ class Router:
             self.b.traces.append(t)
             self.emit({"type": "trace", **t.to_json()})
         for v in vias:
-            self.b.vias.append(v)
-            self.emit({"type": "via", **v.to_json()})
+            if v not in self.b.vias:
+                self.b.vias.append(v)
+                self.emit({"type": "via", **v.to_json()})
         return rec
 
     def ripup(self, ni: int, pin_key=None) -> list[RouteRec]:
@@ -480,6 +522,7 @@ class Router:
             (gone if (pin_key is None or r.pin_key == pin_key) else keep).append(r)
         if not gone:
             return []
+        self._connected_nets.discard(ni)
         self.routes[ni] = keep
         for r in gone:
             for (l, y, x) in r.path:
@@ -496,7 +539,7 @@ class Router:
                 if t in self.b.traces:
                     self.b.traces.remove(t)
             for v in r.vias:
-                if v in self.b.vias:
+                if v in self.b.vias and not any(v in other.vias for other in keep):
                     self.b.vias.remove(v)
         self._mark_pads()
         for r in keep:
@@ -510,6 +553,7 @@ class Router:
                 for ll in range(2):
                     self.owner[ll, j, i] = ni + 1
                     self.radius[ll, j, i] = VIA_DIA / 2
+                    self.stub[ll, j, i] = False
         self.ripups += 1
         if DEBUG:
             for v in self.b.vias:
@@ -524,17 +568,28 @@ class Router:
     def _crossed_nets(self, path, w: float) -> set[int]:
         """Nets whose traces/vias lie within clearance of the path (used after a soft route)."""
         crossed = set()
-        R = int(math.ceil((max(w / 2, VIA_DIA / 2) + CLR + VIA_DIA / 2) / G))
-        for (l, y, x) in path:
+        R = int(math.ceil((max(w / 2, VIA_DIA / 2) + CLR + float(self.radius.max())) / self.grid))
+        via_cells = {(y, x) for k, (l, y, x) in enumerate(path) if k and l != path[k - 1][0]}
+        samples = list(path)
+        # A* also checks both orthogonal flank cells for a diagonal step. Include
+        # their blockers, or a soft path can require a rip-up we never identify.
+        for a, b in zip(path, path[1:]):
+            if a[0] == b[0] and a[1] != b[1] and a[2] != b[2]:
+                samples.extend([(a[0], a[1], b[2]), (a[0], b[1], a[2])])
+        for l, y, x in samples:
             y0, y1 = max(0, y - R), min(self.ny, y + R + 1)
             x0, x1 = max(0, x - R), min(self.nx, x + R + 1)
-            for ll in range(2):
+            is_via = (y, x) in via_cells
+            for ll in (range(2) if is_via else (l,)):
                 sub = self.owner[ll, y0:y1, x0:x1]
                 rad = self.radius[ll, y0:y1, x0:x1]
                 stb = self.stub[ll, y0:y1, x0:x1]
-                for v in np.unique(sub[(sub > 0) & (rad > 0) & ~stb]):
+                yy, xx = np.ogrid[y0:y1, x0:x1]
+                gap = (VIA_DIA / 2 if is_via else w / 2) + CLR + rad
+                near = ((xx - x) * self.grid) ** 2 + ((yy - y) * self.grid) ** 2 < gap ** 2
+                for v in np.unique(sub[(sub > 0) & (rad > 0) & ~stb & near]):
                     crossed.add(int(v) - 1)
-        return {c for c in crossed if c < len(self.nets)}
+        return {c for c in crossed if c < len(self.nets) and c not in self._active_nets}
 
     # ------------------------------------------------------------------ per net
     def _region(self, cells, targets, margin_cells: int):
@@ -548,7 +603,38 @@ class Router:
         return (max(0, min(ys) - margin_cells), min(self.ny - 1, max(ys) + margin_cells),
                 max(0, min(xs) - margin_cells), min(self.nx - 1, max(xs) + margin_cells))
 
+    def _path_clear(self, ni, w, path):
+        """Validate a proposed soft path against the post-rip-up hard rules."""
+        hard, soft, via_hard, via_soft = self._blocked_for(ni, w)
+        blocked = hard | soft
+        for a, b in zip(path, path[1:]):
+            l, y, x = b
+            if blocked[l, y, x]:
+                return False
+            if a[0] != l:
+                if via_hard[y, x] or via_soft[y, x]:
+                    return False
+            elif a[1] != y and a[2] != x and blocked[l, a[1], x] and blocked[l, y, a[2]]:
+                return False
+        return True
+
     def route_net(self, ni: int, allow_ripup=True) -> bool:
+        # Nested repairs may finish a net before its turn in the main queue.
+        # Do not route it twice, or reuse stale partial copper after a failure.
+        if ni in self._connected_nets:
+            return True
+        self.ripup(ni)
+        self._active_nets.add(ni)
+        self.failed = [n for n in self.failed if n != self.nets[ni].name]
+        try:
+            ok = self._route_net(ni, allow_ripup and len(self._active_nets) <= 3)
+            if ok:
+                self._connected_nets.add(ni)
+            return ok
+        finally:
+            self._active_nets.remove(ni)
+
+    def _route_net(self, ni: int, allow_ripup=True) -> bool:
         net = self.nets[ni]
         pins = [self.pins[p] for p in net.pins if p in self.pins]
         if len(pins) < 2:
@@ -564,7 +650,7 @@ class Router:
         to_reroute: list[int] = []
         while remaining:
             bys, bxs = np.nonzero(blob[0] | blob[1])
-            bpts = np.stack([bxs * G, bys * G], axis=1)
+            bpts = np.stack([bxs * self.grid, bys * self.grid], axis=1)
 
             def dist_to_blob(p):
                 cx, cy = p.center
@@ -583,11 +669,11 @@ class Router:
             if path is None and allow_ripup and self.time_left() > 20:
                 path = self._route_pin_to_blob(ni, pin, blob, w, soft=True)
                 if path is not None:
-                    for cn in self._crossed_nets(path, w) - {ni}:
+                    for cn in sorted(self._crossed_nets(path, w) - {ni}):
                         self.ripup(cn)
                         to_reroute.append(cn)
-                    path2 = self._route_pin_to_blob(ni, pin, blob, w)
-                    path = path2 if path2 is not None else path
+                    if not self._path_clear(ni, w, path):
+                        path = self._route_pin_to_blob(ni, pin, blob, w)
             if path is None:
                 ok_all = False
                 self.failed.append(net.name)
@@ -605,11 +691,11 @@ class Router:
             for l, y, x in self.pad_cells[pin.key]:
                 blob[l, y, x] = True
             connected.append(pin)
-        for cn in to_reroute:
+        for cn in dict.fromkeys(to_reroute):
             if self.nets[cn].cls == "gnd":
                 self._route_all_gnd_stubs(allow_ripup=False)
             else:
-                self.route_net(cn, allow_ripup=False)
+                self.route_net(cn, allow_ripup=allow_ripup)
         return ok_all
 
     def _pad_center_at(self, ni: int, cell):
@@ -631,7 +717,7 @@ class Router:
             return self._astar(starts, target, hardb, ~via_hard, region, soft=softb, via_soft=via_soft, max_nodes=600000, extra=self.under_body_l)
         blocked = hardb | softb
         via_ok = ~(via_hard | via_soft)
-        for margin in (50, 10000):
+        for margin in (int(math.ceil(10 / self.grid)), 10000):
             region = self._region(starts, target, margin)
             path = self._astar(starts, target, blocked, via_ok, region, extra=self.under_body_l)
             if path is not None:
@@ -662,22 +748,30 @@ class Router:
             target[1] = plane_mask & ~blocked[1]
             blocked[1] |= ~plane_mask  # never wander around the bottom layer outside the main plane
         path = None
-        for margin in (15, 45, 120):
+        for margin in (int(math.ceil(mm / self.grid)) for mm in (3, 9, 24)):
             region = self._region(starts, None, margin)
             path = self._astar(starts, target, blocked, via_ok, region, goal_bottom=goal_bottom, via_cost=2.0, extra=self.under_body_l)
             if path is not None:
                 break
         to_reroute = []
         if path is None and allow_ripup:
-            region = self._region(starts, None, 45)
+            region = self._region(starts, None, int(math.ceil(9 / self.grid)))
             path = self._astar(starts, target, hardb, ~via_hard, region, goal_bottom=goal_bottom, via_cost=2.0, soft=softb, via_soft=via_soft)
             if path is not None:
-                for cn in self._crossed_nets(path, w) - {ni}:
+                for cn in sorted(self._crossed_nets(path, w) - {ni}):
                     self.ripup(cn)
                     to_reroute.append(cn)
+                if not self._path_clear(ni, w, path):
+                    path = None
         if path is None:
             # fallback: join existing GND copper on the top layer (another pad's stub / via) instead of dropping a new via
-            blob = (self.owner == ni + 1) & (self.radius > 0)
+            # Reserved pad escapes are not copper. Only join paths which were
+            # actually committed, otherwise two unconnected pads can form a
+            # floating GND branch that the grid mistakes for a plane connection.
+            blob = np.zeros_like(self.owner, dtype=bool)
+            for rec in self.routes.get(ni, []):
+                for l, y, x in rec.path:
+                    blob[l, y, x] = True
             for l, y, x in starts:
                 blob[l, y, x] = False
             if blob.any():
@@ -685,17 +779,18 @@ class Router:
             if path is None:
                 self.emit({"type": "route_fail", "net": self.nets[ni].name, "reason": f"no via spot near {pin.comp.ref}.{pin.pad.num}"})
                 self.failed.append(self.nets[ni].name)
-                return False
-        self._commit(ni, w, path, start_pt=pin.center, pin_key=pin.key)
+        if path is not None:
+            self._commit(ni, w, path, start_pt=pin.center, pin_key=pin.key)
         for cn in to_reroute:
             if self.nets[cn].cls == "gnd":
                 self._route_all_gnd_stubs(allow_ripup=False)
             else:
                 self.route_net(cn, allow_ripup=False)
-        return True
+        return path is not None
 
     def _route_all_gnd_stubs(self, allow_ripup=True):
         gn = self.nets[self.gnd_idx]
+        self.failed = [n for n in self.failed if n != gn.name]
         pins = [self.pins[k] for k in gn.pins if k in self.pins]
         pins.sort(key=lambda p: p.min_dim)  # fine-pitch pins first: least freedom
         for p in pins:
@@ -706,15 +801,16 @@ class Router:
 
     # ------------------------------------------------------------------ pour analysis
     def pour_mask(self) -> np.ndarray:
-        """Bottom-layer cells that remain copper in the GND pour."""
+        """Conservative pour core, excluding necks removed by zone filling."""
         gnd = self.gnd_idx
         own = (gnd + 1) if gnd is not None else -99
         other = (self.owner[1] > 0) & (self.owner[1] != own)
         m = ~self.hard[1] & ~other
+        clearance = self.b.pour_clearance + self.b.pour_min_thickness / 2
         for r_obs in np.unique(self.radius[1][other]) if other.any() else []:
             tier = other & (self.radius[1] == r_obs)
-            m &= ~dilate(tier, (self.b.pour_clearance + float(r_obs)) / G)
-        pb = self._pad_block_for(self.b.pour_clearance)
+            m &= ~dilate(tier, (clearance + float(r_obs)) / self.grid)
+        pb = self._pad_block_for(clearance)
         m &= ~((pb[1] != 0) & (pb[1] != own))
         return m
 
@@ -739,6 +835,30 @@ class Router:
                                 stack.append((yy, xx))
         if cur == 0:
             return labels, 0, []
+        # Separate pour polygons can be electrically connected by a top-layer
+        # GND jumper. Count connectivity, not just the 2-D flood-fill islands.
+        # Otherwise healing adds working bridges but reports *more* orphans
+        # (the new bridge vias), triggering needless rerouting.
+        parent = list(range(cur + 1))
+
+        def root(label):
+            while parent[label] != label:
+                parent[label] = parent[parent[label]]
+                label = parent[label]
+            return label
+
+        through_cells = {(y, x) for key, pr in self.pins.items()
+                         if pr.net_idx == self.gnd_idx and 1 in pr.layers
+                         for _, y, x in self.pad_cells[key]}
+        for rec in self.routes.get(self.gnd_idx, []):
+            touched = {int(labels[y, x]) for l, y, x in rec.path
+                       if labels[y, x] and (l == 1 or self.is_via[y, x] or (y, x) in through_cells)}
+            if touched:
+                first = root(min(touched))
+                for label in touched:
+                    parent[root(label)] = first
+        merged = np.array([root(label) for label in range(cur + 1)], dtype=np.int32)
+        labels = merged[labels]
         gnd_name = self.nets[self.gnd_idx].name if self.gnd_idx is not None else "GND"
         anchors = [(v.x, v.y) for v in self.b.vias if v.net == gnd_name]
         for pr in self.pins.values():
@@ -773,24 +893,85 @@ class Router:
             return 0
         healed = 0
         target = np.zeros((2, self.ny, self.nx), dtype=bool)
-        target[1] = labels == main
         gnd = self.gnd_idx
+        # End on actual GND copper, not an arbitrary flood-fill cell: the grid
+        # pour estimate can differ from KiCad's thermal/zone geometry.
+        anchors = [(v.x, v.y) for v in self.b.vias if v.net == self.nets[gnd].name]
+        anchors += [p.center for p in self.pins.values() if p.net_idx == gnd and 1 in p.layers]
+        for ax, ay in anchors:
+            i, j = self._cell(ax, ay)
+            if labels[j, i] == main:
+                target[:, j, i] = True
         for ax, ay in orphans:
             i, j = self._cell(ax, ay)
-            hardb, softb, via_hard, via_soft = self._blocked_for(gnd, 0.3)
-            blocked = hardb | softb
-            blocked[1] &= ~(labels == main)
-            starts = [(1, j, i)]
+            # Orphan anchors are existing vias or through-hole pads, so both
+            # layers are already connected without placing a new via-in-pad.
+            starts = [(0, j, i), (1, j, i)]
             region = self._region(starts, target, 60)
-            path = self._astar(starts, target, blocked, ~(via_hard | via_soft), region, layer_mult=(1.6, 1.0))
+            path = None
+            for width in (0.3, 0.2):
+                # Fine-pitch ground stubs can leave a 0.2 mm escape corridor.
+                # A wider repair must not make an already legal escape unusable.
+                hardb, softb, via_hard, via_soft = self._blocked_for(gnd, width)
+                path = self._astar(starts, target, hardb | softb, ~(via_hard | via_soft),
+                                   region, layer_mult=(1.6, 1.0))
+                if path is not None:
+                    break
             if path is None:
                 continue
-            self._commit(gnd, 0.3, path)
+            self._commit(gnd, width, path)
             healed += 1
         return healed
 
     # ------------------------------------------------------------------ driver
     def route_all(self) -> dict:
+        """Keep the fast coarse solution; refine incomplete fine-pitch boards.
+
+        Both passes share one time budget. Refinement is transactional: a worse
+        candidate cannot replace the board or leave stale copper in the UI.
+        An explicit grid_pitch disables automatic refinement for diagnostics.
+        """
+        if not self._refine:
+            return self._route_all()
+        emit, events = self.emit, []
+        budget, started = self.time_budget, self.t0
+
+        def record(event):
+            events.append(event)
+            emit(event)
+
+        self.emit = record
+        self.time_budget = min(60.0, budget / 3)
+        try:
+            result = self._route_all()
+        finally:
+            self.emit, self.time_budget = emit, budget
+        if (not result['failed'] and not result['orphan_gnd']) or self.time_left() < 10:
+            return result
+
+        from .drc import run_drc
+
+        def score(board, res):
+            errors = run_drc(board, res['failed'], res['orphan_gnd'])['errors']
+            return errors, len(res['failed']), res['orphan_gnd']
+
+        baseline = score(self.b, result)
+        board = self.b
+        candidate = Router(replace(board, traces=[], vias=[]), emit,
+                           time_budget=self.time_left(), grid_pitch=FINE_G)
+        emit({'type': 'reset_routing', 'reason': 'refining fine-pitch escapes to 0.1 mm'})
+        refined = candidate.route_all()
+        if score(candidate.b, refined) < baseline:
+            board.traces, board.vias = candidate.b.traces, candidate.b.vias
+            self.__dict__.update(candidate.__dict__)
+            self.b, self.t0, self.time_budget = board, started, budget
+            return refined
+        emit({'type': 'reset_routing', 'reason': 'keeping the better routing result'})
+        for event in events:
+            emit(event)
+        return result
+
+    def _route_all(self) -> dict:
         b = self.b
         order = []
         for i, n in enumerate(self.nets):
@@ -839,28 +1020,19 @@ class Router:
         labels, main, orphans = self.pour_islands()
         healed = 0
         if orphans and self.gnd_idx is not None:
-            # 1) move stranded GND stubs so their via lands on the main plane
-            gnd = self.gnd_idx
-            moved = 0
-            for ax, ay in orphans:
-                rec = next((r for r in self.routes.get(gnd, []) if r.pin_key and any(abs(v.x - ax) < 1e-6 and abs(v.y - ay) < 1e-6 for v in r.vias)), None)
-                if rec is None:
-                    continue
-                self.ripup(gnd, rec.pin_key)
-                if self.route_gnd_stub(self.pins[rec.pin_key], allow_ripup=False, plane_mask=(labels == main)):
-                    moved += 1
-                else:
-                    self.route_gnd_stub(self.pins[rec.pin_key], allow_ripup=False)
+            # Other GND pads can join a stub instead of owning their own via.
+            # Moving that stub silently disconnects those branches; keep it and
+            # bridge its island to the main pour instead.
+            healed = self.heal_islands(labels, main, orphans)
             labels, main, orphans = self.pour_islands()
-            healed += moved
-            # 2) jumpers for anything still stranded (through-hole pads etc.)
-            if orphans:
-                healed += self.heal_islands(labels, main, orphans)
-                labels, main, orphans = self.pour_islands()
         self.emit({"type": "pour", "layer": "B.Cu", "net": self.nets[self.gnd_idx].name if self.gnd_idx is not None else "GND",
                    "clearance": b.pour_clearance, "islands_healed": healed, "orphans": len(orphans)})
-        self._progress(total, total)
-        return {"routed": routed, "total": total, "failed": sorted(set(self.failed)), "orphan_gnd": len(orphans),
+        failed = sorted(set(self.failed))
+        routed = total - len(failed)
+        if orphans and self.gnd_idx is not None and self.nets[self.gnd_idx].name not in failed:
+            routed -= 1
+        self._progress(routed, total)
+        return {"routed": routed, "total": total, "failed": failed, "orphan_gnd": len(orphans), "grid_mm": self.grid,
                 "length_mm": round(sum(t.length for t in b.traces), 1), "vias": len(b.vias), "ripups": self.ripups}
 
     def _neighbour_nets(self, ni: int, margin: float) -> list[int]:

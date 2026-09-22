@@ -201,7 +201,7 @@ async def design(prompt: str, options: dict, send: Callable[[dict], Awaitable[No
             "components": len([c for c in board.components if c.footprint.style != "hole"]),
             "nets": len(board.nets), "traces": len(board.traces), "vias": len(board.vias),
             "total_trace_mm": round(sum(t.length for t in board.traces), 1),
-            "routed_pct": round(100.0 * (1 - len(route_res["failed"]) / max(1, n_routable)), 1),
+            "routed_pct": round(100.0 * route_res["routed"] / max(1, route_res["total"]), 1),
             "drc_errors": drc["errors"], "ripups": route_res["ripups"],
         }
         exp = await run.run_blocking(export_all, board, design_json, drc, stats, run.dir, keepouts, True)

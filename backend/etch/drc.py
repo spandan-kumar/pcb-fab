@@ -15,6 +15,7 @@ RULES = {
     "min_via_diameter_mm": 0.5,
     "edge_clearance_mm": 0.3,
     "hole_to_copper_mm": 0.254,
+    "hole_to_hole_mm": 0.5,
     "design_clearance_mm": 0.18,
 }
 
@@ -173,8 +174,10 @@ def run_drc(board: Board, routing_failed: list[str] | None = None, orphan_gnd: i
                                "message": f"Trace {t.net} width {t.width} mm < {RULES['min_trace_mm']} mm"})
     # vias / holes
     n_holes = 0
+    holes = []
     for v in board.vias:
         n_holes += 1
+        holes.append((v.x, v.y, v.drill / 2, f"via {v.net}"))
         if v.drill < RULES["min_drill_mm"]:
             violations.append({"code": "drill", "severity": "error", "layer": "F.Cu", "x": v.x, "y": v.y, "message": f"Via drill {v.drill} mm < {RULES['min_drill_mm']} mm"})
         if (v.diameter - v.drill) / 2 < RULES["min_annular_mm"]:
@@ -185,8 +188,15 @@ def run_drc(board: Board, routing_failed: list[str] | None = None, orphan_gnd: i
                 continue
             n_holes += 1
             cx, cy, w, h = c.pad_abs(pad)
+            holes.append((cx, cy, pad.drill / 2, f"{c.ref}.{pad.num}"))
             if pad.plated and (min(w, h) - pad.drill) / 2 < RULES["min_annular_mm"]:
                 violations.append({"code": "annular", "severity": "error", "layer": "F.Cu", "x": cx, "y": cy, "message": f"{c.ref}.{pad.num} annular ring < {RULES['min_annular_mm']} mm"})
+    for i, (x, y, radius, ref) in enumerate(holes):
+        for xx, yy, other_radius, other_ref in holes[i + 1:]:
+            gap = math.hypot(x - xx, y - yy) - radius - other_radius
+            if gap < RULES['hole_to_hole_mm'] - 1e-6:
+                violations.append({"code": "hole_spacing", "severity": "warning", "layer": "F.Cu", "x": x, "y": y,
+                                   "message": f"Drills {ref} to {other_ref}: {gap:.3f} mm < {RULES['hole_to_hole_mm']} mm"})
     # edge clearance
     W, H = board.width, board.height
     ec = RULES["edge_clearance_mm"]
@@ -222,7 +232,7 @@ def run_drc(board: Board, routing_failed: list[str] | None = None, orphan_gnd: i
     checks = [
         {"name": "Copper clearance", "count": n_pairs, "ok": not any(v["code"] == "clearance" for v in violations)},
         {"name": "Trace width", "count": n_traces, "ok": not any(v["code"] == "trace_width" for v in violations)},
-        {"name": "Drill & annular ring", "count": n_holes, "ok": not any(v["code"] in ("drill", "annular") for v in violations)},
+        {"name": "Drill & annular ring", "count": n_holes, "ok": not any(v["code"] in ("drill", "annular", "hole_spacing") for v in violations)},
         {"name": "Board edge clearance", "count": n_edge, "ok": not any(v["code"] == "edge_clearance" for v in violations)},
         {"name": "Courtyard overlap", "count": n_court, "ok": not any(v["code"] == "courtyard" for v in violations)},
         {"name": "Connectivity", "count": n_nets, "ok": not any(v["code"] in ("unconnected", "plane_island") for v in violations)},

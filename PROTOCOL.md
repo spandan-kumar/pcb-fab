@@ -110,10 +110,17 @@ Pad coordinates are relative to the footprint origin, unrotated. Footprint place
 {"type":"trace","net":"SDA","layer":"F.Cu","width":0.25,"points":[[10.0,5.0],[10.0,9.0],[14.0,13.0]]}
 {"type":"via","net":"SDA","x":14.0,"y":13.0,"drill":0.3,"diameter":0.6}
 {"type":"route_fail","net":"SDA","reason":"no path"}
+{"type":"ripup","net":"SDA","traces":2,"vias":1}
+{"type":"reset_routing","reason":"refining fine-pitch escapes to 0.1 mm"}
 {"type":"routing_progress","routed":12,"total":47,"length_mm":312.4,"vias":9}
 {"type":"pour","layer":"B.Cu","net":"GND","clearance":0.3}
 ```
 A net may produce several `trace` events (one per polyline segment run per layer). The bottom layer is a GND pour: render B.Cu as solid copper with a `clearance`-wide gap around non-GND B.Cu traces, vias and through-pads.
+
+`ripup` removes a net's previous copper. `reset_routing` clears all routing geometry, failures and pour state before
+a refinement attempt or restoration of the better result; subsequent events rebuild it. The final `routing_progress`
+counts successfully routed nets, excluding unresolved nets and an isolated GND plane. A completed routing stage does
+not imply that every net succeeded; use DRC and the independent KiCad check for completion/validation.
 
 ### drc
 ```json
